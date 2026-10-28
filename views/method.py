@@ -52,6 +52,9 @@ def render() -> None:
       sentence (similarity ≥ {nli_evidence.RELEVANCE}) that the model is confident about
       (≥ {nli_evidence.STANCE_PROB:.0%}) decides: <em>Supported</em> or <em>Refuted</em>. Going in
       relevance order avoids the model's habit of calling off-topic sentences contradictions.
+      The deciding sentence must also contain at least {nli_evidence.KEY_TERMS:.0%} of the claim's
+      key words and {nli_evidence.KEY_NAMES:.0%} of its names and numbers, so a sentence about
+      someone else (“Minister Arvind Sawant resigned”) can't decide “Narendra Modi resigned”.
       Anything else is <em>Not enough evidence</em>.</li>
   </ol>
 

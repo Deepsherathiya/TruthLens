@@ -106,9 +106,10 @@ def parse_claim(text: str) -> dict:
         is_acronym = not shouting and w.isupper() and w.isalpha() and 2 <= len(w) <= 4
         if low in STOP_WORDS and not is_acronym:
             continue
-        if low in NEGATIONS or (len(w) < 3 and not w.isdigit() and not is_acronym):
+        has_digit = any(c.isdigit() for c in w)  # keeps "21", "5G", "G7"
+        if low in NEGATIONS or (len(w) < 3 and not has_digit and not is_acronym):
             continue
-        if any(c.isdigit() for c in w):
+        if has_digit:
             weight = WEIGHT_NUMBER
         elif is_acronym or (i > 0 and w[0].isupper() and not title_case):
             weight = WEIGHT_NAME

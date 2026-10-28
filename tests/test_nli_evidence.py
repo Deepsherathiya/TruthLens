@@ -5,6 +5,7 @@ The live pipeline is checked with:  python check_demo_claims.py
 
 import pytest
 
+from core import nli_evidence
 from core.nli_evidence import decide, keyword_queries, rating_to_stance
 from core.nlp_models import normalize
 from core.preprocessing import question_to_statement
@@ -46,8 +47,8 @@ def test_normalize_numbers_and_quotes():
     assert normalize("India’s 2,000 notes") == "India's 2000 notes"
 
 
-def wiki(stance, score, sim):
-    return {"stance": stance, "score": score, "similarity": sim}
+def wiki(stance, score, sim, on_topic=True):
+    return {"stance": stance, "score": score, "similarity": sim, "on_topic": on_topic}
 
 
 def fc(stance, score=0.9):
@@ -80,3 +81,32 @@ def test_irrelevant_evidence_is_not_enough():
 def test_conflicting_factchecks_fall_back_to_wikipedia():
     verdict, _, _ = decide([fc("refutes"), fc("supports")], [wiki("supports", 0.9, 0.8)])
     assert verdict == SUPPORTED
+
+
+def test_off_topic_sentence_cannot_decide():
+    items = [wiki("supports", 0.92, 0.80, on_topic=False), wiki("refutes", 0.95, 0.70)]
+    verdict, _, _ = decide([], items)
+    assert verdict == REFUTED and items[1]["deciding"]
+
+
+@pytest.mark.parametrize("claim", ["narendra modi resigned", "Narendra Modi resigned"])
+def test_sentence_about_someone_else_is_off_topic(monkeypatch, claim):
+    # Real case: the NLI model gave this sentence 92% entailment for the claim.
+    sentence = ("12 November 2019: Heavy Industries and Public Enterprises Minister Arvind Sawant "
+                "of Shiv Sena resigned from the cabinet after Shiv Sena's withdrawal from NDA.")
+    monkeypatch.setattr(nli_evidence, "rank_by_similarity", lambda claim, texts, k: [(0, 0.56)])
+    monkeypatch.setattr(nli_evidence, "nli", lambda premises, hypothesis: [
+        {"entailment": 0.92, "contradiction": 0.01, "neutral": 0.07}])
+    items = nli_evidence.sentence_evidence(claim, [{"sentence": sentence}])
+    assert items[0]["stance"] == "supports" and not items[0]["on_topic"]
+    assert decide([], items)[0] == NOT_ENOUGH
+
+
+def test_sentence_about_the_claim_is_on_topic(monkeypatch):
+    sentence = "The Great Wall of China cannot be seen by the naked human eye from the Moon."
+    monkeypatch.setattr(nli_evidence, "rank_by_similarity", lambda claim, texts, k: [(0, 0.84)])
+    monkeypatch.setattr(nli_evidence, "nli", lambda premises, hypothesis: [
+        {"entailment": 0.0, "contradiction": 0.99, "neutral": 0.01}])
+    items = nli_evidence.sentence_evidence(
+        "The Great Wall of China is visible from the Moon with the naked eye", [{"sentence": sentence}])
+    assert items[0]["on_topic"] and decide([], items)[0] == REFUTED

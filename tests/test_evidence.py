@@ -33,6 +33,11 @@ def test_parse_claim_weights_names_and_numbers():
     assert c["keywords"][0] in ("1", "5", "Trump")  # names/numbers searched first
 
 
+def test_short_words_with_digits_are_kept():
+    c = evidence.parse_claim("5G mobile networks spread the coronavirus")
+    assert c["terms"]["5g"] == evidence.WEIGHT_NUMBER and "5g" in c["entities"]
+
+
 def test_title_case_headline_has_no_guessed_names():
     c = evidence.parse_claim("Hillary Just Destroyed This GOP Moron On Live TV")
     assert c["entities"] == {"gop", "tv"}  # only acronyms; capitals mean nothing in Title Case

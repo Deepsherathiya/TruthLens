@@ -118,7 +118,10 @@ If the app is already open when you train, just reload the page: it picks up the
 5. **Verdict**: matching fact-checks decide first. Otherwise the **most relevant** sentence
    (similarity ≥ 0.55) that the NLI model is confident about (≥ 0.80) decides. Using relevance order
    avoids NLI's habit of calling unrelated sentences "contradictions"
-   (e.g. *"Chandrayaan-3 was launched on 14 July"* vs *"... landed"*).
+   (e.g. *"Chandrayaan-3 was launched on 14 July"* vs *"... landed"*). The deciding sentence must
+   also be **on topic**: it must contain ≥ 50% of the claim's key words and ≥ 50% of its names and
+   numbers. Without this, *"Minister Arvind Sawant resigned from the cabinet"* "supported"
+   *"Narendra Modi resigned"*.
    If an almost equally relevant sentence disagrees, the app shows a warning.
 
 Simple yes/no questions are rewritten as statements first ("Is the Earth flat?" → "the Earth is flat").
@@ -134,6 +137,9 @@ Wikipedia passage covering ≥ 80%), and **Refuted** needs ≥ 2 publishers with
 demo claims were used to tune the thresholds, so treat that as a best case. On 10 *unseen* claims it
 got 8/10. Both misses were retrieval errors: a replica-tower sentence beat the real Eiffel Tower
 sentence, and "Boiling water reactor" was retrieved for a claim about boiling water.
+Without an API key it gets 7/10 on the demo claims: the three hoaxes (2000-rupee GPS chip, UNESCO
+anthem, 5G coronavirus) are only refuted by published fact-checks, so they come back as
+*Not enough evidence*.
 
 ## V1 — Style model
 1. **Cleaning** (`core/preprocessing.py`): lowercase, remove bracket tags like `[VIDEO]`, source

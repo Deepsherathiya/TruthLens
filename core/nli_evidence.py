@@ -14,13 +14,19 @@ Pipeline:
   4. NLI             -> does each sentence entail or contradict the claim?
   5. Verdict         -> matching fact-checks decide first (human experts);
                         otherwise the MOST RELEVANT sentence the NLI model is
-                        confident about decides.
+                        confident about decides, if it is on topic.
 
 Why "most relevant confident sentence" instead of "strongest anywhere":
 the NLI model often says "contradiction" for sentences that are merely about
 something else (e.g. "Chandrayaan-3 was launched on 14 July" vs "... landed").
 Those sentences are less similar to the claim than the ones that really
 address it, so going in similarity order avoids most of these errors.
+
+Why "on topic": similarity alone let "Minister Arvind Sawant resigned from the
+cabinet" (from the article "Second Modi ministry") decide "Narendra Modi
+resigned", because the NLI model reads any resignation as support. A sentence
+may only decide if it contains at least half of the claim's key words,
+including at least half of its names and numbers.
 """
 
 import re
@@ -37,6 +43,8 @@ CANDIDATES = 15          # candidate sentences sent to the NLI model
 RELEVANCE = 0.55         # min similarity for a sentence to be allowed to decide
 STANCE_PROB = 0.80       # min NLI probability to call a sentence supporting/refuting
 CONFLICT_WINDOW = 0.05   # warn if an opposite sentence is almost as relevant as the decider
+KEY_TERMS = 0.5          # min share of the claim's (weighted) key words a deciding sentence contains
+KEY_NAMES = 0.5          # min share of the claim's names and numbers a deciding sentence contains
 SHOW_EVIDENCE = 6
 
 _STOPWORDS = set("""a an the is are was were be been being of in on at to for from by with and or
@@ -146,8 +154,12 @@ def wikipedia_candidates(claim: str) -> tuple[list[dict], dict]:
 
 def sentence_evidence(claim: str, candidates: list[dict]) -> list[dict]:
     """Rank candidate sentences by similarity to the claim, then judge the best with NLI."""
+    # Imported here because core.evidence imports this module.
+    from core.evidence import match, parse_claim
+
     if not candidates:
         return []
+    key_terms = parse_claim(claim)
     ranked = [(i, s) for i, s in rank_by_similarity(claim, [c["sentence"] for c in candidates], CANDIDATES)
               if s >= RELEVANCE]
     if not ranked:
@@ -161,8 +173,10 @@ def sentence_evidence(claim: str, candidates: list[dict]) -> list[dict]:
             stance, score = REFUTES, p["contradiction"]
         else:
             stance, score = NEUTRAL, p["neutral"]
+        m = match(key_terms, candidates[i]["sentence"])
         items.append({**candidates[i], "rating": None, "stance": stance,
-                      "score": round(score, 3), "similarity": round(sim, 3)})
+                      "score": round(score, 3), "similarity": round(sim, 3),
+                      "on_topic": m["score"] >= KEY_TERMS and m["entity_coverage"] >= KEY_NAMES})
     return items
 
 
@@ -180,9 +194,9 @@ def decide(fc_items: list[dict], wiki_items: list[dict]) -> tuple[str, float, st
         return verdict, best["score"], None
     # No matching fact-checks (or they disagree): use the candidate sentences.
 
-    # Most relevant first; only sentences relevant enough may decide.
+    # Most relevant first; only sentences relevant enough and on topic may decide.
     decisive = [e for e in sorted(wiki_items, key=lambda e: -e["similarity"])
-                if e["similarity"] >= RELEVANCE and e["stance"] != NEUTRAL]
+                if e["similarity"] >= RELEVANCE and e["on_topic"] and e["stance"] != NEUTRAL]
     if not decisive:
         return NOT_ENOUGH, 0.0, None
     top = decisive[0]
@@ -234,7 +248,10 @@ def check_claim(claim: str, result: dict, api_key: str | None = None, more_candi
     # fact-checks, then sentences by relevance (NOT by NLI confidence, which
     # made barely-relevant "contradictions" look like the main evidence).
     wiki_items.sort(key=lambda e: -e["similarity"])
-    evidence = fc_items + wiki_items[:SHOW_EVIDENCE]
+    shown = wiki_items[:SHOW_EVIDENCE]
+    # The decider can rank below SHOW_EVIDENCE when the sentences above it are all neutral.
+    shown += [e for e in wiki_items[SHOW_EVIDENCE:] if e.get("deciding")]
+    evidence = fc_items + shown
     evidence.sort(key=lambda e: not e.get("deciding", False))  # stable sort keeps the rest in order
     result["evidence"] = evidence
     result["summary"] = summarize(verdict, evidence)
