@@ -1,8 +1,9 @@
 """
 Single entry point for the UI: analyze(text, mode) -> result dict.
 
-mode="style"     V1: wording-based model prediction (core/style_model.py)
-mode="evidence"  V2: search independent online sources (core/evidence.py)
+mode="style"     V1: TF-IDF classifier on the wording (core/style_model.py)
+mode="evidence"  V2: fact-checks + Wikipedia + news, judged by an NLI model
+                 or by word matching (core/evidence.py)
 
 Both return the same result format (see core/schema.py).
 """
@@ -12,8 +13,8 @@ from core.preprocessing import text_stats, validate_input
 from core.schema import empty_result
 
 
-def analyze(text: str, mode: str = "style", pipeline=None,
-            api_key: str | None = None, fetchers: dict | None = None) -> dict:
+def analyze(text: str, mode: str = "style", pipeline=None, api_key: str | None = None,
+            fetchers: dict | None = None, engine: str | None = None) -> dict:
     result = empty_result(mode, text)
 
     error = validate_input(text)
@@ -28,7 +29,7 @@ def analyze(text: str, mode: str = "style", pipeline=None,
                 pipeline = style_model.load_pipeline()
             return style_model.predict_style(pipeline, text, result)
         if mode == "evidence":
-            return evidence.check_sources(text, result, api_key=api_key, fetchers=fetchers)
+            return evidence.check_sources(text, result, api_key=api_key, fetchers=fetchers, engine=engine)
         result["error"] = f"Unknown mode: {mode}"
     except style_model.ModelNotTrainedError as e:
         result["error"] = str(e)

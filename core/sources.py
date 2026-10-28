@@ -36,8 +36,16 @@ NEWS_ARCHIVE = "News archive"
 NEWS = "Recent news"
 FACT_CHECK = "Fact checks"
 
+try:  # optional: read GOOGLE_FACTCHECK_API_KEY etc. from a .env file
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Wikimedia asks API users to identify themselves with a descriptive User-Agent.
 USER_AGENT = os.environ.get(
-    "TRUTHLENS_USER_AGENT", "TruthLens/2.0 (educational NLP project; python-requests)"
+    "TRUTHLENS_USER_AGENT",
+    "TruthLens/2.0 (student NLP project; https://github.com/Deepsherathiya/TruthLens)",
 )
 TIMEOUT = (5, 20)  # seconds: (connect, read)
 
@@ -46,12 +54,15 @@ GDELT_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 FACTCHECK_API = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
 
 # GDELT asks for at most one request every 5 seconds. When busy it is slow
-# to answer at all, so it gets a shorter timeout than the other sources.
+# to answer at all, so it gets a shorter timeout than the other sources, and
+# after a failure it is skipped for a while instead of slowing every check.
 GDELT_MIN_INTERVAL = 5.5
 GDELT_TIMEOUT = (5, 10)
+GDELT_COOLDOWN = 300  # seconds
 _gdelt_lock = threading.Lock()
 _gdelt_last_call = 0.0
-_wiki_lock = threading.Lock()
+_gdelt_down_until = 0.0
+WIKI_LOCK = threading.Lock()  # shared with core/retrieval.py
 
 _TAGS = re.compile(r"<[^>]+>")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
@@ -106,7 +117,7 @@ def split_sentences(text: str) -> list[str]:
 def _wiki_get(params: dict) -> dict:
     # One Wikipedia call at a time, as Wikimedia's API etiquette asks. Its
     # rate limit is short-lived, so a refused call is retried once.
-    with _wiki_lock:
+    with WIKI_LOCK:
         return _get_json(WIKI_API, {"format": "json", "formatversion": 2, **params}, retry_wait=2)
 
 
@@ -232,13 +243,15 @@ def _gdelt_date(seendate: str | None) -> str | None:
 
 def search_news(keywords: list[str], limit: int = 30) -> list[dict]:
     """Search worldwide English-language news from roughly the last 3 months (GDELT)."""
-    global _gdelt_last_call
+    global _gdelt_last_call, _gdelt_down_until
     terms = [k for k in keywords if len(k) >= 3][:4]  # GDELT rejects very short words
     if len(terms) < 2:
         raise SourceError("needs at least two distinctive words to search news")
     query = " ".join(terms) + " sourcelang:english"
 
     with _gdelt_lock:
+        if time.monotonic() < _gdelt_down_until:
+            raise SourceError("skipped: it was unavailable a moment ago, retrying in a few minutes")
         wait = GDELT_MIN_INTERVAL - (time.monotonic() - _gdelt_last_call)
         if wait > 0:
             time.sleep(wait)
@@ -247,6 +260,9 @@ def search_news(keywords: list[str], limit: int = 30) -> list[dict]:
                 "query": query, "mode": "ArtList", "maxrecords": limit,
                 "format": "json", "sort": "HybridRel",
             }, timeout=GDELT_TIMEOUT)
+        except SourceError:
+            _gdelt_down_until = time.monotonic() + GDELT_COOLDOWN
+            raise
         finally:
             _gdelt_last_call = time.monotonic()
 

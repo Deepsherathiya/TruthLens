@@ -74,6 +74,41 @@ def clean_title(text: str) -> str:
     return normalise(text).lower()
 
 
+_BE_VERBS = {"is", "are", "was", "were"}
+_DO_VERBS = {"does", "do", "did"}
+_DETERMINERS = {"the", "a", "an"}
+
+
+def question_to_statement(text: str) -> tuple[str, bool]:
+    """
+    Turn simple yes/no questions into statements, because the NLI model
+    compares statements:  "Is the Earth flat?" -> "the Earth is flat".
+    Returns (text, changed). Anything it can't handle is returned unchanged.
+    """
+    t = text.strip()
+    words = t.rstrip("?").split()
+    if not t.endswith("?") or len(words) < 3:
+        return t, False
+    aux, rest = words[0].lower(), words[1:]
+    if aux in _DO_VERBS:
+        # "Did Einstein win the Nobel Prize?" -> "Einstein win the Nobel Prize"
+        # (grammar isn't perfect, but the NLI model reads it fine)
+        return " ".join(rest), True
+    if aux in _BE_VERBS:
+        # Subject = optional determiner + run of Capitalised words (allowing "of"),
+        # or just the first word: "Is the Great Wall of China visible ..." ->
+        # "the Great Wall of China is visible ..."
+        i = 1 if rest[0].lower() in _DETERMINERS else 0
+        j = i
+        while j < len(rest) and (rest[j][:1].isupper() or (rest[j] == "of" and j + 1 < len(rest) and rest[j + 1][:1].isupper())):
+            j += 1
+        end = max(j, i + 1)
+        if end >= len(rest):
+            return t, False
+        return " ".join(rest[:end] + [aux] + rest[end:]), True
+    return t, False
+
+
 def validate_input(text) -> str | None:
     """Return an error message for bad user input, or None if it's fine."""
     if not isinstance(text, str) or not text.strip():

@@ -1,5 +1,5 @@
 """
-Model loading, cached source checks and per-session state for the UI.
+Model loading, cached evidence checks and per-session state for the UI.
 
 Session state keys:
   headline  text in the headline box          online   source-check toggle
@@ -17,6 +17,7 @@ import streamlit as st
 from core import style_model
 from core.analyze import analyze
 from core.schema import FAKE
+from core.sources import NEWS
 
 # st.Page objects by name, filled in by app.py so pages can link to each other.
 PAGES: dict = {}
@@ -64,7 +65,7 @@ def get_metrics() -> dict | None:
 
 
 def factcheck_key() -> str | None:
-    """Google Fact Check API key from the environment or .streamlit/secrets.toml."""
+    """Google Fact Check API key from the environment, .env, or .streamlit/secrets.toml."""
     key = os.environ.get("GOOGLE_FACTCHECK_API_KEY")
     if key:
         return key
@@ -83,13 +84,15 @@ class _Uncacheable(Exception):
 def _cached_sources(text: str, api_key: str | None) -> dict:
     result = analyze(text, mode="evidence", api_key=api_key)
     # Don't keep a failed or partial search for an hour: raising skips the cache.
-    if result["error"] or any(not c["ok"] and not c["skipped"] for c in result["sources_checked"]):
+    # GDELT is busy so often that its failure alone doesn't count.
+    failed = [c for c in result["sources_checked"] if not c["ok"] and not c["skipped"] and c["name"] != NEWS]
+    if result["error"] or failed:
         raise _Uncacheable(result)
     return result
 
 
 def run_sources(text: str) -> dict:
-    """Source check for a headline; repeated checks within an hour are served from cache."""
+    """Evidence check for a headline; repeated checks within an hour are served from cache."""
     try:
         return _cached_sources(text.strip(), factcheck_key())
     except _Uncacheable as e:
@@ -108,7 +111,7 @@ def remember(text: str, style: dict | None, sources: dict | None) -> None:
         "Headline": text.strip(),
         "Writing style": (style or {}).get("verdict") or "–",
         "P(fake)": (style or {}).get("probabilities", {}).get(FAKE),
-        "Source check": (sources or {}).get("verdict") or ("Off" if sources is None else "Unavailable"),
+        "Evidence check": (sources or {}).get("verdict") or ("Off" if sources is None else "Unavailable"),
     })
 
 

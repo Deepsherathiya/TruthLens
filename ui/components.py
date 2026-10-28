@@ -13,7 +13,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from core.schema import (
-    CONTRADICTS, CORROBORATED, DISPUTED, FAKE, NOT_ENOUGH, REAL, RELATED, SUPPORTS, UNCERTAIN,
+    FAKE, NEUTRAL, NOT_ENOUGH, REAL, REFUTED, REFUTES, SUPPORTED, SUPPORTS, UNCERTAIN,
 )
 from core.sources import FACT_CHECK
 from core.style_model import UNCERTAIN_BAND
@@ -40,15 +40,20 @@ VERDICT_STYLE = {
     REAL: ("tone-real", "check"),
     FAKE: ("tone-fake", "cross"),
     UNCERTAIN: ("tone-unc", "question"),
-    CORROBORATED: ("tone-real", "check"),
-    DISPUTED: ("tone-fake", "cross"),
+    SUPPORTED: ("tone-real", "check"),
+    REFUTED: ("tone-fake", "cross"),
     NOT_ENOUGH: ("tone-neutral", "question"),
 }
 
-STANCE_STYLE = {
-    SUPPORTS: ("tone-real", "check", "Close match"),
-    CONTRADICTS: ("tone-fake", "cross", "Opposite wording"),
-    RELATED: ("tone-neutral", "tilde", "Related"),
+STANCE_STYLE = {SUPPORTS: ("tone-real", "check"), REFUTES: ("tone-fake", "cross"), NEUTRAL: ("tone-neutral", "tilde")}
+# What each stance means depends on which engine judged it.
+STANCE_LABEL = {
+    "nli": {SUPPORTS: "Supports", REFUTES: "Contradicts", NEUTRAL: "Neutral"},
+    "words": {SUPPORTS: "Close match", REFUTES: "Opposite wording", NEUTRAL: "Related"},
+}
+ENGINE_LABEL = {
+    "nli": "NLI model (DeBERTa-v3) reading each sentence",
+    "words": "word matching (install PyTorch for the NLI model)",
 }
 
 
@@ -75,7 +80,7 @@ def masthead() -> None:
   <div class="tl-mast-top">
     <span>NLP-powered news analysis</span>
     <span>{today:%A}, {today.day} {today:%B %Y}</span>
-    <span>Edition 2 &middot; Style model + source check</span>
+    <span>Edition 2 &middot; Style model + evidence check</span>
   </div>
   <h1 class="tl-wordmark">Truth<em>Lens</em></h1>
   <div class="tl-double-rule"></div>
@@ -110,7 +115,7 @@ def empty_state(title: str, body: str) -> None:
 def footer(extra: str = "") -> None:
     show(f"""
 <footer class="tl-foot">
-  <span>TruthLens &middot; B.Tech NLP lab project &middot; runs locally; the source check calls free public APIs</span>
+  <span>TruthLens &middot; B.Tech NLP lab project &middot; the evidence check calls free public APIs</span>
   <span>{extra}</span>
 </footer>""")
 
@@ -190,28 +195,31 @@ def sources_card(r: dict | None, online: bool) -> str:
     if not online or r is None:
         return """
 <section class="tl-card tone-off">
-  <p class="tl-kicker">Source check</p>
+  <p class="tl-kicker">Evidence check</p>
   <div class="tl-verdict"><span class="tl-verdict-icon">""" + ICON["dash"] + """</span>
   <h2 class="tl-verdict-word">Switched off</h2></div>
-  <p class="tl-dek">Turn on <strong>Cross-check online sources</strong> to search Wikipedia,
-  its news archive and recent news for the same claim.</p>
+  <p class="tl-dek">Turn on <strong>Check evidence online</strong> to search fact-checks,
+  Wikipedia and news for the same claim.</p>
 </section>"""
     if r["error"]:
         return f"""
 <section class="tl-card tone-off">
-  <p class="tl-kicker">Source check</p>
+  <p class="tl-kicker">Evidence check</p>
   <div class="tl-verdict"><span class="tl-verdict-icon">{ICON['alert']}</span>
   <h2 class="tl-verdict-word">Unavailable</h2></div>
   <p class="tl-dek">{esc(r['error'])}</p>
   {_source_status(r['sources_checked'])}
 </section>"""
-    head, tone = _verdict_head("Source check", r["verdict"])
+    head, tone = _verdict_head("Evidence check", r["verdict"])
     keys = "".join(f"<code>{esc(k)}</code>" for k in r["keywords"])
+    confidence = (f" Model-estimated confidence of the deciding evidence: {pct(r['confidence'], 0)}."
+                  if r.get("engine") == "nli" and r["verdict"] != NOT_ENOUGH and r.get("confidence") else "")
     return f"""
 <section class="tl-card {tone}">
   {head}
-  <p class="tl-dek">{esc(r['summary'])}</p>
+  <p class="tl-dek">{esc(r['summary'])}{esc(confidence)}</p>
   {_source_status(r['sources_checked'])}
+  <div class="tl-keys"><span class="tl-kicker">Judged by</span><span class="tl-fine">{esc(ENGINE_LABEL.get(r.get('engine'), ''))}</span></div>
   <div class="tl-keys"><span class="tl-kicker">Searched for</span>{keys}</div>
 </section>"""
 
@@ -234,12 +242,23 @@ def highlight(text: str, words: list[str]) -> str:
     return "".join(f"<mark>{esc(p)}</mark>" if i % 2 else esc(p) for i, p in enumerate(parts))
 
 
-def clippings(evidence: list[dict]) -> str:
+def _measure(e: dict, engine: str) -> str:
+    """How strongly this item was judged, in words that fit the engine."""
+    if engine != "nli":
+        return f"Contains {pct(e['score'], 0)} of the claim's key terms"
+    if e["source"] == FACT_CHECK:
+        return f"Same claim (NLI entailment {pct(e['score'], 0)})"
+    return f"NLI {pct(e['score'], 0)} · relevance {e.get('similarity', 0):.2f}"
+
+
+def clippings(evidence: list[dict], engine: str = "words") -> str:
     items = []
     for e in evidence:
-        tone, icon, label = STANCE_STYLE[e["stance"]]
-        if e["source"] == FACT_CHECK and e["stance"] != RELATED:
+        tone, icon = STANCE_STYLE[e["stance"]]
+        label = STANCE_LABEL.get(engine, STANCE_LABEL["words"])[e["stance"]]
+        if e["source"] == FACT_CHECK and e["stance"] != NEUTRAL:
             label = "Rated accurate" if e["stance"] == SUPPORTS else "Rated false"
+        deciding = '<span class="tl-deciding">Decided the verdict</span>' if e.get("deciding") else ""
         rating = (f'<span class="tl-rating">Rating: &ldquo;{esc(e["rating"])}&rdquo;</span>'
                   if e.get("rating") else "")
         url = safe_url(e.get("url"))
@@ -247,13 +266,13 @@ def clippings(evidence: list[dict]) -> str:
                 if url else esc(e["title"]))
         date_html = f"<time>{nice_date(e.get('date'))}</time>" if e.get("date") else ""
         items.append(f"""
-<li class="tl-clip {tone}">
+<li class="tl-clip {tone}{' is-deciding' if e.get('deciding') else ''}">
   <div class="tl-clip-meta"><span class="tl-src">{esc(e['source'])}</span>
     <span class="tl-pub">{esc(e['publisher'])}</span>{date_html}</div>
   <div>
-    <span class="tl-stance">{ICON[icon]}{label}</span>
+    <span class="tl-stance">{ICON[icon]}{label}</span>{deciding}
     <p class="tl-clip-text">{highlight(e['sentence'], e.get('matched', []))}</p>
-    <div class="tl-clip-foot">{link}<span>Contains {pct(e['score'], 0)} of the claim's key terms</span>{rating}</div>
+    <div class="tl-clip-foot">{link}<span>{esc(_measure(e, engine))}</span>{rating}</div>
   </div>
 </li>""")
     return f'<ol class="tl-clips">{"".join(items)}</ol>'

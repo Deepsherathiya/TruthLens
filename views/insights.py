@@ -62,7 +62,7 @@ def render() -> None:
 
     sources = last.get("sources")
     if sources and sources.get("keywords"):
-        ui.section("Key terms used for the source check", "names and numbers weigh more")
+        ui.section("Key terms used for the evidence search", "names and numbers weigh more")
         ui.show('<div class="tl-keys">' + "".join(f"<code>{ui.esc(k)}</code>" for k in sources["keywords"])
                 + "</div>")
     ui.footer()

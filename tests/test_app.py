@@ -1,6 +1,6 @@
 """
 UI tests: the Streamlit app is run headlessly with streamlit.testing.
-The online source check is switched off, so no network is used.
+The online evidence check is switched off, so no network is used.
 """
 
 from pathlib import Path
@@ -17,7 +17,7 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 def _run_headline(at: AppTest, text: str) -> AppTest:
     at.text_area(key="headline").set_value(text)
     at.toggle(key="online").set_value(False)
-    return next(b for b in at.button if b.label == "Analyze headline").click().run()
+    return next(b for b in at.button if b.label == "Analyze").click().run()
 
 
 def test_analyze_history_and_clear(model_dir):
@@ -26,7 +26,7 @@ def test_analyze_history_and_clear(model_dir):
     at = _run_headline(at, "Senate says trade talks with China will continue")
     assert not at.exception
     assert len(at.session_state.history) == 1
-    assert at.session_state.history[0]["Source check"] == "Off"
+    assert at.session_state.history[0]["Evidence check"] == "Off"
     next(b for b in at.button if b.label == "Clear history").click().run()
     assert at.session_state.history == []
 

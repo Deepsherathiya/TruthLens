@@ -1,6 +1,6 @@
 """Method: how both signals work, what is sent online, and the limits."""
 
-from core import evidence
+from core import evidence, nli_evidence, nlp_models
 from core.style_model import UNCERTAIN_BAND
 from ui import components as ui, state
 
@@ -9,10 +9,12 @@ def render() -> None:
     lo, hi = UNCERTAIN_BAND
     key_status = ("is set" if state.factcheck_key() else
                   "is not set, so published fact-checks are not searched")
+    engine_status = ("installed, so the NLI engine is used" if nlp_models.available() else
+                     "not installed, so the word-matching engine is used")
     ui.page_header(
         "Method", "How TruthLens reads a headline",
-        "Two independent signals, each simple enough to explain step by step. Neither is a fact-check "
-        "on its own; together they tell you how a headline is written and whether anyone else reports it.",
+        "Two independent signals: how a headline is written, and what the evidence says about it. "
+        "Neither is a guarantee on its own.",
     )
     ui.show(f"""
 <article class="tl-prose">
@@ -33,44 +35,53 @@ def render() -> None:
       coefficient; positive pushes toward fake.</li>
   </ol>
 
-  <h2>2 · The source check</h2>
+  <h2>2 · The evidence check</h2>
   <ol>
-    <li><strong>Key terms.</strong> Stop-words and reporting words (“says”, “breaking”) are dropped.
-      Numbers weigh {evidence.WEIGHT_NUMBER:g}, names and acronyms {evidence.WEIGHT_NAME:g},
-      other words {evidence.WEIGHT_WORD:g}. A light suffix rule makes “passes” match “passed”.</li>
-    <li><strong>Search.</strong> The key terms are sent to Wikipedia (article intros), Wikipedia's
-      daily <em>Current events</em> archive (each item cites the outlet that reported it, such as
-      Reuters or the BBC), GDELT (worldwide news from about the last three months) and, if an API key
-      is configured, Google Fact Check Tools.</li>
-    <li><strong>Matching.</strong> A passage is a <em>close match</em> when it contains at least
-      {evidence.STRONG_MATCH:.0%} of the weighted key terms and most of the names and numbers.
-      If a negation (“not”, “never”, “denies”) comes just before a matched word in only one of the
-      two texts, it is marked <em>opposite wording</em>. Weaker overlaps are shown as <em>related</em> but not counted.</li>
-    <li><strong>Verdict.</strong> Fact-checkers' ratings of a matching claim decide first. Otherwise
-      <em>Corroborated</em> needs close matches from at least {evidence.MIN_INDEPENDENT} independent
-      publishers (or one Wikipedia passage covering {evidence.WIKI_ALONE:.0%} of the terms), and
-      <em>Disputed</em> needs {evidence.MIN_INDEPENDENT} publishers with opposite wording. Anything
-      else is <em>Not enough evidence</em>.</li>
+    <li><strong>Search.</strong> Published fact-checks (Google Fact Check Tools, if an API key is set),
+      the top Wikipedia articles, Wikipedia's daily <em>Current events</em> archive (each item cites the
+      outlet that reported it, such as Reuters or the BBC) and GDELT (worldwide news from about the
+      last three months). Simple yes/no questions are first rewritten as statements.</li>
+    <li><strong>Fact-checks.</strong> A fact-check only counts if it is about the <em>same</em> claim:
+      similar meaning and, in the logically valid direction, one statement implies the other
+      (rated False: our claim must imply the checked claim; rated True: the reverse).</li>
+    <li><strong>Ranking.</strong> Sentence embeddings (MiniLM) keep the {nli_evidence.CANDIDATES}
+      sentences most similar to the claim.</li>
+    <li><strong>NLI.</strong> A DeBERTa-v3 cross-encoder reads each sentence with the claim and gives
+      probabilities for <em>entails</em>, <em>contradicts</em> and <em>neutral</em>.</li>
+    <li><strong>Verdict.</strong> Matching fact-checks decide first. Otherwise the <em>most relevant</em>
+      sentence (similarity ≥ {nli_evidence.RELEVANCE}) that the model is confident about
+      (≥ {nli_evidence.STANCE_PROB:.0%}) decides: <em>Supported</em> or <em>Refuted</em>. Going in
+      relevance order avoids the model's habit of calling off-topic sentences contradictions.
+      Anything else is <em>Not enough evidence</em>.</li>
   </ol>
 
+  <h3>Fallback: word matching</h3>
+  <p>The NLI models need PyTorch (currently {engine_status}). Without it, each passage is judged by
+  how many of the claim's key words it contains: numbers weigh {evidence.WEIGHT_NUMBER:g}, names
+  {evidence.WEIGHT_NAME:g}, other words {evidence.WEIGHT_WORD:g}. A <em>close match</em> needs
+  {evidence.STRONG_MATCH:.0%} of them and most names and numbers; a negation (“not”, “never”) just
+  before a matched word in only one of the two texts makes it <em>opposite wording</em>.
+  <em>Supported</em> then needs close matches from {evidence.MIN_INDEPENDENT} independent publishers,
+  and <em>Refuted</em> needs {evidence.MIN_INDEPENDENT} with opposite wording.</p>
+
   <h2>What leaves your computer</h2>
-  <p>The writing-style model runs entirely on this machine. When <strong>Cross-check online
-  sources</strong> is on, the headline's key terms (not your history) are sent to the services
-  above. Results are cached for an hour so repeated checks don't call them again. The Google Fact
-  Check key {key_status}; add it as <code>GOOGLE_FACTCHECK_API_KEY</code> in the environment or in
-  <code>.streamlit/secrets.toml</code>.</p>
+  <p>The writing-style model and the NLI models run on this machine. When <strong>Check evidence
+  online</strong> is on, the claim (or its key words) is sent to the services above. Results are
+  cached for an hour so repeated checks don't call them again. The Google Fact Check key {key_status};
+  put <code>GOOGLE_FACTCHECK_API_KEY=…</code> in <code>.env</code> (see <code>.env.example</code>).</p>
 
   <h2>Limits worth knowing</h2>
   <ul>
     <li><strong>Style is not truth.</strong> The model learned how 2016–17 Reuters headlines and
       fake-news sites write. A sober fake or a sensational real story will fool it.</li>
-    <li><strong>Old, narrow training data.</strong> Mostly US politics. New names are unknown words,
-      and the app warns when few words are recognised.</li>
-    <li><strong>Word matching, not understanding.</strong> The source check can miss paraphrases
-      (“approves” vs “passes”) and contradictions that don't use a negation word. A missing match
-      is not a debunk, especially for very recent or local news.</li>
+    <li><strong>Retrieval is the weak link.</strong> If the wrong article is found, the NLI step reasons
+      correctly about the wrong text. The thresholds were tuned on 10 demo claims, so real accuracy is
+      lower.</li>
+    <li><strong>Numbers and dates</strong> are hard for small NLI models.</li>
+    <li><strong>Recent or local news</strong> may not be covered yet. <em>Not enough evidence</em> is
+      not a debunk.</li>
     <li><strong>Free APIs.</strong> GDELT allows one request every five seconds and is often busy;
-      the check simply reports which sources answered.</li>
+      the check reports which sources answered.</li>
   </ul>
 </article>""")
     ui.footer()

@@ -1,11 +1,11 @@
 """
-Tests for the source check (evidence mode). No network: sources are replaced
-by small fake fetchers returning hand-written passages.
+Tests for the evidence check. No network and no model downloads: sources are
+replaced by small fake fetchers, and the NLI models by fake functions.
 """
 
 from core import evidence, sources
 from core.analyze import analyze
-from core.schema import CONTRADICTS, CORROBORATED, DISPUTED, NOT_ENOUGH, RELATED, SUPPORTS
+from core.schema import NEUTRAL, NOT_ENOUGH, REFUTED, REFUTES, SUPPORTED, SUPPORTS
 
 
 def item(text, publisher="example.com", source=sources.NEWS, rating=None, url=None):
@@ -60,21 +60,16 @@ def test_short_claim_needs_every_key_word():
     # Regression: passages about Nazi-occupied Paris used to "corroborate" this.
     claim = evidence.parse_claim("Paris is the capital of Germany")
     m = evidence.match(claim, "Paris had been occupied by Nazi Germany since 1940.")
-    assert evidence.stance(claim, m) == RELATED
+    assert evidence.stance(claim, m) == NEUTRAL
 
 
 def test_stances():
     claim = evidence.parse_claim("Senate passes tax bill")
     assert evidence.stance(claim, evidence.match(claim, "The Senate passed the tax bill 51-49.")) == SUPPORTS
-    assert evidence.stance(claim, evidence.match(claim, "The Senate did not pass the tax bill.")) == CONTRADICTS
+    assert evidence.stance(claim, evidence.match(claim, "The Senate did not pass the tax bill.")) == REFUTES
     assert evidence.stance(claim, evidence.match(claim, "Weather is sunny in Paris.")) is None
 
 
-def test_rating_kind():
-    assert evidence.rating_kind("Pants on Fire!") == "false"
-    assert evidence.rating_kind("Inaccurate") == "false"   # not fooled by "accurate"
-    assert evidence.rating_kind("Mostly True") == "true"
-    assert evidence.rating_kind("Half True") == "mixed"
 
 
 # ---------------------------------------------------------------- verdicts
@@ -84,7 +79,7 @@ def _ev(stance, publisher, source=sources.NEWS, score=0.9):
 
 
 def test_two_independent_publishers_corroborate():
-    assert evidence.decide([_ev(SUPPORTS, "bbc.com"), _ev(SUPPORTS, "reuters.com")])[0] == CORROBORATED
+    assert evidence.decide([_ev(SUPPORTS, "bbc.com"), _ev(SUPPORTS, "reuters.com")])[0] == SUPPORTED
 
 
 def test_one_publisher_is_not_enough():
@@ -93,18 +88,18 @@ def test_one_publisher_is_not_enough():
 
 
 def test_one_publisher_cannot_count_both_ways():
-    ev = [_ev(SUPPORTS, "bbc.com", score=0.9), _ev(CONTRADICTS, "bbc.com", score=0.8), _ev(SUPPORTS, "cnn.com")]
-    assert evidence.decide(ev)[0] == CORROBORATED
+    ev = [_ev(SUPPORTS, "bbc.com", score=0.9), _ev(REFUTES, "bbc.com", score=0.8), _ev(SUPPORTS, "cnn.com")]
+    assert evidence.decide(ev)[0] == SUPPORTED
 
 
 def test_close_wikipedia_passage_can_corroborate_alone():
-    assert evidence.decide([_ev(SUPPORTS, "wikipedia.org", sources.WIKIPEDIA, 0.85)])[0] == CORROBORATED
+    assert evidence.decide([_ev(SUPPORTS, "wikipedia.org", sources.WIKIPEDIA, 0.85)])[0] == SUPPORTED
     assert evidence.decide([_ev(SUPPORTS, "wikipedia.org", sources.WIKIPEDIA, 0.76)])[0] == NOT_ENOUGH
 
 
 def test_fact_checks_decide_first():
-    ev = [_ev(SUPPORTS, "bbc.com"), _ev(SUPPORTS, "cnn.com"), _ev(CONTRADICTS, "snopes.com", sources.FACT_CHECK)]
-    assert evidence.decide(ev)[0] == DISPUTED
+    ev = [_ev(SUPPORTS, "bbc.com"), _ev(SUPPORTS, "cnn.com"), _ev(REFUTES, "snopes.com", sources.FACT_CHECK)]
+    assert evidence.decide(ev)[0] == REFUTED
 
 
 # ---------------------------------------------------------------- full check (fake sources)
@@ -117,7 +112,7 @@ def test_check_sources_end_to_end():
         sources.NEWS: failing("busy (rate limit); try again in a few seconds"),
     }
     r = analyze("Senate passes tax bill", mode="evidence", fetchers=fetchers)
-    assert r["error"] is None and r["verdict"] == CORROBORATED
+    assert r["error"] is None and r["verdict"] == SUPPORTED
     assert {e["publisher"] for e in r["evidence"]} == {"wikipedia.org", "reuters.com"}
     assert any("busy" in w for w in r["warnings"])            # failed source is reported...
     status = {c["name"]: c for c in r["sources_checked"]}
@@ -130,7 +125,7 @@ def test_fact_check_rating_disputes():
     fetchers = {sources.FACT_CHECK: fetcher(item("Pope Francis endorses Donald Trump for president", "politifact.com",
                                                  sources.FACT_CHECK, rating="Pants on Fire"))}
     r = analyze("Pope Francis endorses Donald Trump for president", mode="evidence", fetchers=fetchers)
-    assert r["verdict"] == DISPUTED and r["evidence"][0]["stance"] == CONTRADICTS
+    assert r["verdict"] == REFUTED and r["evidence"][0]["stance"] == REFUTES
 
 
 def test_all_sources_failing_is_an_error_not_a_verdict():
@@ -152,3 +147,71 @@ def test_wikitext_news_items():
     [(sentence, urls)] = sources.wikitext_news_items(text)
     assert sentence == "The UK votes to leave the European Union."
     assert urls == ["https://www.bbc.com/news/x", "http://reuters.com/y"]
+
+
+# ---------------------------------------------------------------- engines
+
+def test_questions_are_rewritten_before_searching():
+    fetchers = {sources.WIKIPEDIA: fetcher(item("The Senate passed the tax bill.", "wikipedia.org", sources.WIKIPEDIA))}
+    r = analyze("Did the Senate pass the tax bill?", mode="evidence", fetchers=fetchers)
+    assert any("Question rewritten" in w for w in r["warnings"])
+    assert r["engine"] == "words"  # fake fetchers always use word matching
+
+
+def test_nli_engine_combines_fact_checks_wikipedia_and_news(monkeypatch):
+    from core import nli_evidence, retrieval
+    monkeypatch.setattr(retrieval, "search_factchecks",
+                        lambda claim, api_key=None: ([], "No Fact Check API key set in .env, so ..."))
+    monkeypatch.setattr(retrieval, "search_wikipedia", lambda claim: ([
+        {"sentence": "The tax bill was debated in the Senate for weeks.", "title": "Tax Cuts and Jobs Act",
+         "url": "https://en.wikipedia.org/wiki/Tax_Cuts_and_Jobs_Act"}], None))
+    monkeypatch.setattr(evidence, "NEWS_FETCHERS", {
+        sources.NEWS_ARCHIVE: fetcher(item("The United States Senate passes the tax bill 51-49.", "reuters.com",
+                                           sources.NEWS_ARCHIVE)),
+        sources.NEWS: failing("busy (rate limit); try again in a few seconds"),
+    })
+    # Fake models: the news sentence is the most similar and is entailed; the other is neutral.
+    monkeypatch.setattr(nli_evidence, "rank_by_similarity",
+                        lambda q, texts, k: sorted([(i, 0.9 if "passes" in t else 0.7) for i, t in enumerate(texts)],
+                                                   key=lambda x: -x[1]))
+    monkeypatch.setattr(nli_evidence, "nli", lambda premises, hyp: [
+        {"entailment": 0.95, "contradiction": 0.01, "neutral": 0.04} if "passes" in p else
+        {"entailment": 0.10, "contradiction": 0.05, "neutral": 0.85} for p in premises])
+
+    r = analyze("Senate passes tax bill", mode="evidence", engine="nli")
+    assert r["error"] is None and r["engine"] == "nli" and r["verdict"] == SUPPORTED
+    top = r["evidence"][0]
+    assert top["deciding"] and top["publisher"] == "reuters.com" and top["matched"]
+    assert [c["name"] for c in r["sources_checked"]] == evidence.SOURCE_ORDER
+    status = {c["name"]: c for c in r["sources_checked"]}
+    assert status[sources.FACT_CHECK]["skipped"] and not status[sources.NEWS]["ok"]
+    assert any("busy" in w for w in r["warnings"]) and "reuters.com" in r["summary"]
+
+
+def test_nli_failure_falls_back_to_word_matching(monkeypatch):
+    def broken(*args, **kwargs):
+        raise OSError("could not download the model")
+    monkeypatch.setattr(evidence, "_check_nli", broken)
+    monkeypatch.setattr(evidence, "default_fetchers", lambda api_key=None: {
+        sources.WIKIPEDIA: fetcher(item("The Senate passed the tax bill on 2 December 2017.", "wikipedia.org",
+                                        sources.WIKIPEDIA))})
+    r = analyze("Senate passes tax bill", mode="evidence", engine="nli")
+    assert r["engine"] == "words" and r["verdict"] == SUPPORTED
+    assert any("used word matching instead" in w for w in r["warnings"])
+
+
+def test_busy_news_source_is_skipped_for_a_while(monkeypatch):
+    calls = []
+
+    def unavailable(*args, **kwargs):
+        calls.append(1)
+        raise sources.SourceError("timed out")
+    monkeypatch.setattr(sources, "_get_json", unavailable)
+    monkeypatch.setattr(sources, "_gdelt_last_call", 0.0)
+    monkeypatch.setattr(sources, "_gdelt_down_until", 0.0)
+    for _ in range(2):
+        try:
+            sources.search_news(["Senate", "tax", "bill"])
+        except sources.SourceError as e:
+            message = str(e)
+    assert len(calls) == 1 and message.startswith("skipped")  # second call didn't wait on GDELT

@@ -85,8 +85,8 @@ def render() -> None:
     ui.page_header(
         "Batch analysis", "Score a whole file of headlines",
         f"Upload a CSV with one headline per row. Each row gets the writing-style prediction; the "
-        f"online source check is not run here because the free APIs limit how often they can be "
-        f"called. Up to {MAX_UPLOAD_MB} MB and the first {MAX_BATCH_ROWS:,} rows.",
+        f"online evidence check is not run here because it is slow and the free APIs limit how "
+        f"often they can be called. Up to {MAX_UPLOAD_MB} MB and the first {MAX_BATCH_ROWS:,} rows.",
     )
     pipeline = state.get_pipeline()
     if pipeline is None:

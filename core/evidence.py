@@ -1,30 +1,37 @@
 """
-V2 "evidence" analysis: look for the claim in independent online sources.
+V2 "evidence" analysis: look for the claim in fact-checks, Wikipedia and news.
 
-No LLM and no extra ML model; every step is simple enough to check by hand.
+check_sources() picks one of two engines for judging the evidence:
 
-1. parse_claim(): pull out the claim's key terms (content words, names,
-   numbers) and note whether it is negated ("not", "never", "denies").
-2. Search Wikipedia, recent news (GDELT) and, with an API key, published
-   fact-checks (core/sources.py) using those key terms.
-3. match(): what share of the claim's key terms a passage contains.
-   Names and numbers weigh more, and most of them must be present.
-4. stance(): supports / contradicts / related for each passage.
-5. decide(): combine the stances into one verdict.
+  "nli"   (core/nli_evidence.py) when PyTorch and sentence-transformers are
+          installed: sentence embeddings rank candidate sentences and an NLI
+          model decides whether each one supports or contradicts the claim.
+  "words" (this file) otherwise, or if the models fail to load: word matching
+          that needs no ML model, so every step can be checked by hand:
+            1. parse_claim(): the claim's key terms (content words, names,
+               numbers) and whether it is negated ("not", "never", "denies").
+            2. match(): what share of those key terms a passage contains.
+            3. stance(): supports / refutes / neutral for each passage.
+            4. decide(): combine the stances into one verdict.
 
-Known limits: matching is word-based, so a paraphrase ("approves" vs
-"passes") can be missed, and a contradiction that doesn't use a negation
-word goes unnoticed. Fact-checker ratings are the strongest "Disputed" signal.
+Both engines search the news archive and recent news (core/sources.py), so
+news headlines get evidence even when Wikipedia has nothing yet.
+Set TRUTHLENS_ENGINE=words to force word matching (e.g. on a slow machine).
+
+Known limits of word matching: a paraphrase ("approves" vs "passes") can be
+missed, and a contradiction that doesn't use a negation word goes unnoticed.
 """
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
-from core import sources
-from core.preprocessing import normalise
-from core.schema import CONTRADICTS, CORROBORATED, DISPUTED, NOT_ENOUGH, RELATED, SUPPORTS
+from core import nlp_models, sources
+from core.nli_evidence import rating_to_stance
+from core.preprocessing import normalise, question_to_statement
+from core.schema import NEUTRAL, NOT_ENOUGH, REFUTED, REFUTES, SUPPORTED, SUPPORTS
 
 # Thresholds: share of the claim's (weighted) key terms found in a passage.
 # STRONG_MATCH is deliberately high: with a short claim like "Paris is the
@@ -32,10 +39,10 @@ from core.schema import CONTRADICTS, CORROBORATED, DISPUTED, NOT_ENOUGH, RELATED
 STRONG_MATCH = 0.75      # close enough to treat as the same claim
 RELATED_MATCH = 0.35     # same topic: shown, but doesn't count toward the verdict
 FACT_CHECK_MATCH = 0.6   # fact-checks rephrase claims, so slightly looser
-WIKI_ALONE = 0.8         # a Wikipedia passage this close can corroborate on its own
+WIKI_ALONE = 0.8         # a Wikipedia passage this close can support the claim on its own
 ENTITY_COVERAGE = 2 / 3  # share of names/numbers a strong match must contain
 MIN_MATCHED_TERMS = 2
-MIN_INDEPENDENT = 2      # different publishers needed to corroborate or dispute
+MIN_INDEPENDENT = 2      # different publishers needed to support or refute
 NEGATION_WINDOW = 2      # a negation counts only up to this many words before a matched term
 MAX_EVIDENCE = 12
 
@@ -56,13 +63,9 @@ STOP_WORDS = (ENGLISH_STOP_WORDS | REPORTING_WORDS) - NEGATIONS
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
-# Fact-checker ratings are free text ("Mostly False", "Pants on Fire", ...).
-_MIXED = ("half", "mixture", "mixed", "partly", "partially", "missing context",
-          "needs context", "exaggerat", "unproven")
-_FALSE = ("false", "fake", "pants on fire", "incorrect", "inaccurate", "misleading",
-          "fabricated", "hoax", "scam", "wrong", "no evidence", "baseless", "not true",
-          "distorted", "altered", "doctored", "debunked", "misattributed", "satire")
-_TRUE = ("true", "correct", "accurate", "confirmed")
+# Searched by both engines; the NLI engine searches Wikipedia and fact-checks itself.
+NEWS_FETCHERS = {sources.NEWS_ARCHIVE: sources.search_news_archive, sources.NEWS: sources.search_news}
+SOURCE_ORDER = [sources.WIKIPEDIA, sources.NEWS_ARCHIVE, sources.NEWS, sources.FACT_CHECK]
 
 
 def tokens(text: str) -> list[str]:
@@ -148,34 +151,23 @@ def match(claim: dict, passage: str) -> dict:
     }
 
 
-def rating_kind(rating: str | None) -> str:
-    r = (rating or "").lower()
-    if any(k in r for k in _MIXED):
-        return "mixed"
-    if any(k in r for k in _FALSE):
-        return "false"
-    if any(k in r for k in _TRUE):
-        return "true"
-    return "unknown"
-
-
 def stance(claim: dict, m: dict, fact_check_rating: str | None = None) -> str | None:
-    """supports / contradicts / related, or None if the passage is off-topic."""
+    """supports / refutes / neutral, or None if the passage is off-topic."""
     strong = m["n_matched"] >= MIN_MATCHED_TERMS and m["entity_coverage"] >= ENTITY_COVERAGE
     same_polarity = m["negated"] == claim["negated"]
     if fact_check_rating is not None:
         if strong and m["score"] >= FACT_CHECK_MATCH:
-            kind = rating_kind(fact_check_rating)
-            # A fact-check rating a claim "False" contradicts our claim, unless
+            rated = rating_to_stance(fact_check_rating)
+            # A fact-check rating a claim "False" refutes our claim, unless
             # our claim is the negated version of it.
-            if kind == "false":
-                return CONTRADICTS if same_polarity else SUPPORTS
-            if kind == "true":
-                return SUPPORTS if same_polarity else CONTRADICTS
-            return RELATED
+            if rated == REFUTES:
+                return REFUTES if same_polarity else SUPPORTS
+            if rated == SUPPORTS:
+                return SUPPORTS if same_polarity else REFUTES
+            return NEUTRAL
     elif strong and m["score"] >= STRONG_MATCH:
-        return SUPPORTS if same_polarity else CONTRADICTS
-    return RELATED if m["score"] >= RELATED_MATCH else None
+        return SUPPORTS if same_polarity else REFUTES
+    return NEUTRAL if m["score"] >= RELATED_MATCH else None
 
 
 def _trim(text: str, limit: int = 280) -> str:
@@ -211,11 +203,11 @@ def assess(claim: dict, item: dict) -> dict | None:
 def _publishers(evidence: list[dict], st: str) -> set[str]:
     """
     Publishers whose stance is `st`. Each publisher gets one stance (from its
-    closest match), so one site can't count as both supporting and contradicting.
+    closest match), so one site can't count as both supporting and refuting.
     """
     closest = {}
     for e in evidence:
-        if e["stance"] == RELATED and st != RELATED:
+        if e["stance"] == NEUTRAL and st != NEUTRAL:
             continue
         best = closest.get(e["publisher"])
         if best is None or e["score"] > best["score"]:
@@ -235,29 +227,29 @@ def _count(n: int, noun: str) -> str:
 
 
 def decide(evidence: list[dict]) -> tuple[str, str]:
-    """Combine individual stances into (verdict, one-sentence reason)."""
+    """Word-matching verdict: combine individual stances into (verdict, one-sentence reason)."""
     # 1. Published fact-checks of a matching claim outweigh everything else.
-    checks = [e for e in evidence if e["source"] == sources.FACT_CHECK and e["stance"] != RELATED]
+    checks = [e for e in evidence if e["source"] == sources.FACT_CHECK and e["stance"] != NEUTRAL]
     if checks:
-        false_n = sum(e["stance"] == CONTRADICTS for e in checks)
+        false_n = sum(e["stance"] == REFUTES for e in checks)
         true_n = len(checks) - false_n
         if false_n > true_n:
-            return DISPUTED, f"{_count(false_n, 'published fact-check')} rated a matching claim as false or misleading."
+            return REFUTED, f"{_count(false_n, 'published fact-check')} rated a matching claim as false or misleading."
         if true_n > false_n:
-            return CORROBORATED, f"{_count(true_n, 'published fact-check')} rated a matching claim as accurate."
+            return SUPPORTED, f"{_count(true_n, 'published fact-check')} rated a matching claim as accurate."
         return NOT_ENOUGH, "Published fact-checks of matching claims disagree with each other."
 
     # 2. Otherwise count independent publishers that closely match.
     support = _publishers(evidence, SUPPORTS)
-    against = _publishers(evidence, CONTRADICTS)
+    against = _publishers(evidence, REFUTES)
     wiki_close = any(
         e["source"] == sources.WIKIPEDIA and e["stance"] == SUPPORTS and e["score"] >= WIKI_ALONE
         for e in evidence
     )
     if (len(support) >= MIN_INDEPENDENT or wiki_close) and len(support) > len(against):
-        return CORROBORATED, f"Closely matched by {_names(support)}."
+        return SUPPORTED, f"Closely matched by {_names(support)}."
     if len(against) >= MIN_INDEPENDENT and len(against) > len(support):
-        return DISPUTED, f"{_names(against)} match the wording but state the opposite."
+        return REFUTED, f"{_names(against)} match the wording but state the opposite."
     if support and against:
         return NOT_ENOUGH, f"Sources conflict: {_names(support)} match it, {_names(against)} state the opposite."
     if support:
@@ -266,7 +258,7 @@ def decide(evidence: list[dict]) -> tuple[str, str]:
     if against:
         return NOT_ENOUGH, (f"Only {_names(against)} appears to contradict it; at least "
                             f"{MIN_INDEPENDENT} independent sources are needed.")
-    related = _publishers(evidence, RELATED)
+    related = _publishers(evidence, NEUTRAL)
     if related:
         return NOT_ENOUGH, (f"Related coverage from {_count(len(related), 'source')}, "
                             "but nothing closely matches the claim.")
@@ -274,31 +266,17 @@ def decide(evidence: list[dict]) -> tuple[str, str]:
 
 
 def default_fetchers(api_key: str | None = None) -> dict:
-    fetchers = {
-        sources.WIKIPEDIA: sources.search_wikipedia,
-        sources.NEWS_ARCHIVE: sources.search_news_archive,
-        sources.NEWS: sources.search_news,
-    }
+    fetchers = {sources.WIKIPEDIA: sources.search_wikipedia, **NEWS_FETCHERS}
     if api_key:
         fetchers[sources.FACT_CHECK] = lambda kw: sources.search_fact_checks(kw, api_key)
     return fetchers
 
 
-def check_sources(text: str, result: dict, api_key: str | None = None,
-                  fetchers: dict | None = None) -> dict:
-    """Fill a schema result dict (see core/schema.py) with the V2 source check."""
-    claim = parse_claim(text)
-    result["cleaned"] = normalise(text)
-    result["keywords"] = claim["keywords"][:6]
-    if len(claim["terms"]) < MIN_MATCHED_TERMS:
-        result["error"] = "Not enough distinctive words to search for. Try a more specific headline."
-        return result
-
-    fetchers = fetchers or default_fetchers(api_key)
+def fetch_all(fetchers: dict, keywords: list[str]) -> tuple[list[dict], list[dict]]:
+    """Query all sources at the same time; each can fail on its own. Returns (items, statuses)."""
     raw, checked = [], []
-    # Query all sources at the same time; each can fail on its own.
-    with ThreadPoolExecutor(max_workers=len(fetchers)) as pool:
-        futures = {name: pool.submit(fn, claim["keywords"]) for name, fn in fetchers.items()}
+    with ThreadPoolExecutor(max_workers=max(1, len(fetchers))) as pool:
+        futures = {name: pool.submit(fn, keywords) for name, fn in fetchers.items()}
         for name, future in futures.items():
             status = {"name": name, "ok": True, "skipped": False, "found": 0, "message": ""}
             try:
@@ -310,14 +288,17 @@ def check_sources(text: str, result: dict, api_key: str | None = None,
             except Exception as e:  # a bug in one source must not hide the others
                 status.update(ok=False, message=f"failed unexpectedly ({type(e).__name__})")
             checked.append(status)
+    return raw, checked
+
+
+def _check_words(claim: dict, result: dict, api_key: str | None, fetchers: dict | None) -> dict:
+    fetchers = fetchers or default_fetchers(api_key)
+    raw, checked = fetch_all(fetchers, claim["keywords"])
     if sources.FACT_CHECK not in fetchers:
         checked.append({"name": sources.FACT_CHECK, "ok": False, "skipped": True, "found": 0,
                         "message": "add a free Google Fact Check API key to include published fact-checks"})
     result["sources_checked"] = checked
-
     if not any(c["ok"] for c in checked):
-        result["error"] = "Could not reach any online source (" + "; ".join(
-            f"{c['name']}: {c['message']}" for c in checked if not c["skipped"]) + ")."
         return result
 
     evidence, seen = [], set()
@@ -329,11 +310,77 @@ def check_sources(text: str, result: dict, api_key: str | None = None,
         if assessed:
             evidence.append(assessed)
     # Fact-checks first, then close matches, then related coverage.
-    evidence.sort(key=lambda e: (e["source"] != sources.FACT_CHECK, e["stance"] == RELATED, -e["score"]))
+    evidence.sort(key=lambda e: (e["source"] != sources.FACT_CHECK, e["stance"] == NEUTRAL, -e["score"]))
 
     result["verdict"], result["summary"] = decide(evidence)
     result["evidence"] = evidence[:MAX_EVIDENCE]
-    for c in checked:
-        if not c["ok"] and not c["skipped"]:
-            result["warnings"].append(f"{c['name']} {c['message']}.")
+    return result
+
+
+def _check_nli(claim_text: str, claim: dict, result: dict, api_key: str | None) -> dict:
+    from core import nli_evidence
+
+    # News sources are fetched in the background while the NLI pipeline
+    # searches fact-checks and Wikipedia; their sentences join the candidates.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        news = pool.submit(fetch_all, NEWS_FETCHERS, claim["keywords"])
+
+        def news_candidates() -> list[dict]:
+            raw, statuses = news.result()
+            result["sources_checked"] += statuses
+            return [{"sentence": p, "source": it["source"], "publisher": it["publisher"],
+                     "title": it["title"], "url": it["url"], "date": it["date"]}
+                    for it in raw for p in it["passages"]]
+
+        nli_evidence.check_claim(claim_text, result, api_key=api_key, more_candidates=news_candidates)
+
+    for e in result["evidence"]:
+        e["matched"] = match(claim, e["sentence"])["matched_words"]
+    return result
+
+
+def check_sources(text: str, result: dict, api_key: str | None = None,
+                  fetchers: dict | None = None, engine: str | None = None) -> dict:
+    """
+    Fill a schema result dict (see core/schema.py) with the V2 evidence check.
+    engine: "nli", "words" or None (NLI if installed; fake `fetchers` imply "words").
+    """
+    # The NLI model compares statements: "Is the Earth flat?" -> "the Earth is flat".
+    claim_text, changed = question_to_statement(text)
+    if changed:
+        result["warnings"].append(f'Question rewritten as a statement: "{claim_text}"')
+    claim = parse_claim(claim_text)
+    result["cleaned"] = normalise(claim_text)
+    result["keywords"] = claim["keywords"][:6]
+    if len(claim["terms"]) < MIN_MATCHED_TERMS:
+        result["error"] = "Not enough distinctive words to search for. Try a more specific headline."
+        return result
+
+    engine = engine or os.environ.get("TRUTHLENS_ENGINE") or (
+        "nli" if fetchers is None and nlp_models.available() else "words")
+    result["engine"] = engine
+    if engine == "nli":
+        warnings_before = list(result["warnings"])
+        try:
+            _check_nli(claim_text, claim, result, api_key)
+        except Exception as e:  # model download failed, out of memory, ...
+            result.update(verdict=None, confidence=None, summary="", evidence=[], sources_checked=[],
+                          warnings=warnings_before + [f"The NLI model could not run ({type(e).__name__}); "
+                                                      "used word matching instead."])
+            result["engine"] = engine = "words"
+    if engine == "words":
+        _check_words(claim, result, api_key, fetchers)
+
+    checked = result["sources_checked"]
+    checked.sort(key=lambda c: SOURCE_ORDER.index(c["name"]) if c["name"] in SOURCE_ORDER else 99)
+    failed = [c for c in checked if not c["ok"] and not c["skipped"]]
+    if failed and len(failed) == sum(not c["skipped"] for c in checked):
+        result.update(verdict=None, confidence=None, evidence=[], error=(
+            "Could not reach any online source ("
+            + "; ".join(f"{c['name']}: {c['message']}" for c in failed) + ")."))
+        return result
+    for c in failed:
+        message = f"{c['name']} {c['message']}."
+        if not any(c["message"] in w for w in result["warnings"]):
+            result["warnings"].append(message)
     return result

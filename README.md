@@ -1,26 +1,22 @@
 # TruthLens — NLP-Powered News Analysis
 
-TruthLens reads a news **headline** in two independent ways:
+TruthLens looks at a news **headline or claim** in two independent ways:
 
-1. **Writing style (offline).** A TF-IDF + Logistic Regression model trained on the ISOT Fake
-   News dataset estimates whether the wording resembles real or fake headlines:
-   **Likely Real**, **Likely Fake** or **Uncertain**, with model-estimated probabilities and the
-   words that pushed the prediction each way.
-2. **Source check (online, optional).** The headline's key terms are searched in Wikipedia,
-   Wikipedia's daily news archive, recent world news (GDELT) and, with a free API key, published
-   fact-checks (Google Fact Check Tools). Result: **Corroborated**, **Disputed** or
-   **Not enough evidence**, with every matching passage shown and linked.
+| | **Evidence check (V2)** | **Writing style (V1)** |
+|---|---|---|
+| Question it answers | *What does the evidence say?* | *Does this read like fake news?* |
+| How | Fact-checks + Wikipedia + news archives → sentence embeddings → NLI model | TF-IDF + Logistic Regression trained on ISOT headlines |
+| Output | Supported / Refuted / Not enough evidence, with sources | Likely Real / Likely Fake / Uncertain, with word weights |
 
-> **It is not a fact checker.** The style model learns writing patterns from 2016–2017 headlines.
-> The source check matches words, names and numbers; it does not understand meaning. A match
-> means other sources say something similar, and no match does not prove a story false.
+> **Neither is a guarantee.** V1 judges writing style only. V2 is evidence-based but automated:
+> it can retrieve the wrong article or misread a sentence. Always open the sources it shows.
 
 ## Features
-- **Analyze**: one headline, both signals side by side, a probability meter with an "Uncertain"
-  zone, the matching source passages with matched words highlighted, example headlines, and a
-  session history you can download as CSV or clear
-- **Text insights**: word/character counts, average word length, all-caps words, share of words
-  the model knows, word contributions (diverging chart) and the headline's top TF-IDF terms
+- **Analyze**: both signals side by side; a probability meter with an "Uncertain" zone; the evidence
+  passages (deciding one first, claim words highlighted, links to the sources); example headlines and
+  demo claims; a session history you can download as CSV or clear
+- **Text insights**: word/character counts, average word length, all-caps words, share of words the
+  model knows, word contributions (diverging chart) and the headline's top TF-IDF terms
 - **Batch**: CSV upload (≤ 5 MB, first 2,000 rows), choose the headline column, output rows stay
   aligned with the input, skipped rows explain why, download results
 - **Model performance**: held-out accuracy / precision / recall / F1, confusion matrix,
@@ -28,46 +24,58 @@ TruthLens reads a news **headline** in two independent ways:
 - **Method**: how both signals work, what is sent online, and the limits
 - Light and dark themes (follows the browser setting)
 
-## Technology
-Python 3.10+, scikit-learn, pandas, NumPy, Streamlit, Altair, requests, joblib, pytest.
-No LLM, no GPU, no paid service. The source check uses free public APIs only.
-
 ## Project structure
 ```
 TruthLens/
 ├── app.py                  # Streamlit entry point: theme + page navigation
-├── train_model.py          # load → clean → split → train → evaluate → save
+├── train_model.py          # V1: load → clean → split → train → evaluate → save
+├── check_demo_claims.py    # V2: run the demo claims live and compare with expected verdicts
 ├── core/                   # all analysis logic (no Streamlit code)
-│   ├── preprocessing.py    # clean_title(), normalise(), validation, text statistics
+│   ├── preprocessing.py    # clean_title(), question → statement, validation, text statistics
 │   ├── schema.py           # the result dict every mode returns
+│   ├── analyze.py          # analyze(text, mode) — the one function the UI calls
 │   ├── style_model.py      # V1: prediction, word contributions, TF-IDF terms
-│   ├── evidence.py         # V2: key terms, matching, stance, verdict
-│   ├── sources.py          # V2: Wikipedia / news archive / GDELT / Fact Check API calls
-│   └── analyze.py          # analyze(text, mode) — the one function the UI calls
+│   ├── evidence.py         # V2: picks the engine; word-matching fallback engine
+│   ├── nli_evidence.py     # V2: NLI engine — fact-check matching, ranking, verdict rule
+│   ├── nlp_models.py       # V2: MiniLM embeddings + DeBERTa NLI
+│   ├── retrieval.py        # V2: Fact Check API + full Wikipedia articles
+│   └── sources.py          # V2: news archive, GDELT, (word engine) Wikipedia intros + fact-checks
 ├── ui/                     # theme (colours, fonts, CSS), HTML components, charts, session state
 ├── views/                  # one module per page: analyze, insights, batch, performance, method
 ├── assets/mark.svg         # logo
 ├── .streamlit/config.toml  # theme, 5 MB upload limit, no usage statistics
-├── tests/                  # pytest (no dataset or internet needed)
+├── .env.example            # copy to .env and add your Fact Check API key
+├── tests/                  # pytest (no dataset, internet or model downloads needed)
 ├── data/                   # put Fake.csv and True.csv here (not included)
 └── models/                 # created by train_model.py
 ```
 
 ## Setup
+Python 3.10+.
+
 Windows:
 ```
 python -m venv .venv
 .venv\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 macOS/Linux:
 ```
 python3 -m venv .venv
 source .venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
+The two NLI models (~270 MB) download from Hugging Face on first use. If PyTorch can't be installed,
+remove the last three lines of `requirements.txt`: the app still runs and judges evidence by word
+matching instead (see below).
 
-## Dataset
+**Fact Check API key (recommended):** copy `.env.example` to `.env` and paste a free Google Fact
+Check Tools API key after `GOOGLE_FACTCHECK_API_KEY=` (Google Cloud console → enable "Fact Check
+Tools API" → create an API key). `.env` is git-ignored. Without a key the other sources still work.
+
+## Dataset (V1)
 Download the **ISOT Fake News Dataset** (University of Victoria; also mirrored on Kaggle as
 "Fake and Real News Dataset") and place `Fake.csv` and `True.csv` in `data/`. Only the `title`
 column is used. Labels come from the file name: `Fake.csv` → fake, `True.csv` → real.
@@ -81,39 +89,53 @@ python train_model.py --csv data/news.csv --text-col headline --label-col label 
 Rows whose label is in neither list are skipped and reported, never guessed. For ISOT files with a
 different headline column name use `--title-col`.
 
-## Train
+## Train, run, test
 ```
-python train_model.py
-```
-This prints the cleaning report and test metrics and writes `models/news_pipeline.joblib` and
-`models/metrics.json`. If the app is already open, just reload the page: it picks up the new model.
-Other locations: `--fake path/Fake.csv --real path/True.csv --out other/folder`
-(the app reads other folders via the `TRUTHLENS_MODEL_DIR` environment variable).
-
-## Run the app
-```
+python train_model.py          # writes models/news_pipeline.joblib and models/metrics.json
 streamlit run app.py
+pytest                         # offline: no dataset, internet or model downloads
+python check_demo_claims.py    # live check of the evidence engine on the 10 demo claims
 ```
+If the app is already open when you train, just reload the page: it picks up the new model.
 
-## Source check settings (optional)
-- **Google Fact Check Tools.** Get a free API key (Google Cloud console → enable "Fact Check Tools
-  API" → create an API key), then either `export GOOGLE_FACTCHECK_API_KEY=...` or create
-  `.streamlit/secrets.toml` with `GOOGLE_FACTCHECK_API_KEY = "..."` (git-ignored).
-  Without a key the other sources still work.
-- **User-Agent.** Wikimedia asks API clients to identify themselves. Set
-  `TRUTHLENS_USER_AGENT="TruthLens/2.0 (your-email-or-repo-url)"` if you deploy the app.
-- Turn the **Cross-check online sources** switch off to keep everything on your computer.
+## V2 — Evidence check
+1. **Fact Check API**: search existing fact-checks (PolitiFact, Snopes, AFP, Alt News, BOOM, ...).
+   If the full claim finds nothing, retry with keywords (the API needs *all* words to match).
+   A fact-check is only used if it's about the *same* claim: similar meaning (MiniLM embeddings ≥ 0.60)
+   **and** the logically valid direction holds (NLI entailment ≥ 0.50):
+   - rated False → our claim must *imply* the fact-checked claim
+   - rated True → the fact-checked claim must imply ours
 
-## Run tests
-```
-pytest
-```
-47 tests cover cleaning, class mapping, probabilities, explanations, batch alignment, training
-(missing/wrong columns, label mapping, end-to-end), the source check with fake sources (no
-internet), HTML escaping, and the app itself (history, clearing, missing model).
+   This drops look-alikes such as *"Video shows Chandrayaan-3 landing"* (False: the video was fake),
+   which says nothing about whether Chandrayaan-3 landed.
+2. **Candidate sentences** (no keys needed):
+   - **Wikipedia**: top 3 articles for the claim, split into sentences.
+   - **News archive**: Wikipedia's daily *Current events* pages, back to the early 2000s. Each item
+     cites the outlet that reported it (Reuters, BBC, …), which is shown as the publisher.
+   - **Recent news**: GDELT, worldwide news from about the last 3 months (often busy; optional).
+3. **Ranking**: `all-MiniLM-L6-v2` keeps the 15 sentences most similar to the claim.
+4. **NLI**: `cross-encoder/nli-deberta-v3-small` labels each as entails / contradicts / neutral.
+5. **Verdict**: matching fact-checks decide first. Otherwise the **most relevant** sentence
+   (similarity ≥ 0.55) that the NLI model is confident about (≥ 0.80) decides. Using relevance order
+   avoids NLI's habit of calling unrelated sentences "contradictions"
+   (e.g. *"Chandrayaan-3 was launched on 14 July"* vs *"... landed"*).
+   If an almost equally relevant sentence disagrees, the app shows a warning.
 
-## How it works
-**Style model**
+Simple yes/no questions are rewritten as statements first ("Is the Earth flat?" → "the Earth is flat").
+
+**Word-matching fallback.** If PyTorch isn't installed or the models fail to load (or you set
+`TRUTHLENS_ENGINE=words`), each passage is judged by how many of the claim's key words it contains
+(numbers weigh 2, names 1.5, other words 1). A *close match* needs ≥ 75% of them and ≥ 2/3 of the
+names and numbers; a negation ("not", "never") just before a matched word in only one text makes it
+*opposite wording*. **Supported** then needs close matches from ≥ 2 independent publishers (or one
+Wikipedia passage covering ≥ 80%), and **Refuted** needs ≥ 2 publishers with opposite wording.
+
+**Results** (`python check_demo_claims.py`): 10/10 on the demo claims with a Fact Check API key; the
+demo claims were used to tune the thresholds, so treat that as a best case. On 10 *unseen* claims it
+got 8/10. Both misses were retrieval errors: a replica-tower sentence beat the real Eiffel Tower
+sentence, and "Boiling water reactor" was retrieved for a claim about boiling water.
+
+## V1 — Style model
 1. **Cleaning** (`core/preprocessing.py`): lowercase, remove bracket tags like `[VIDEO]`, source
    prefixes like `BREAKING:` / `Factbox:`, curly quotes, and normalise `U.S.` → `us`. These patterns
    identify *which website* a headline came from, not whether it is true, so leaving them in
@@ -127,54 +149,48 @@ internet), HTML escaping, and the app itself (history, clearing, missing model).
    Positive pushes toward Fake, negative toward Real. Unseen words get no score.
 5. **Uncertain**: if P(fake) is between 0.40 and 0.60, or none of the words were seen in training.
 
-**Source check** (`core/evidence.py`, `core/sources.py`)
-1. **Key terms**: stop-words and reporting words ("says", "breaking") are dropped; numbers weigh 2,
-   names/acronyms 1.5, other words 1; a light suffix rule matches "passes" with "passed".
-2. **Search**: Wikipedia article intros; Wikipedia *Current events* daily pages (each item cites the
-   outlet, e.g. bbc.com, which becomes the publisher); GDELT news from the last ~3 months; Google
-   Fact Check Tools if a key is set. Sources are queried in parallel; one failing never breaks the others.
-3. **Matching**: a passage is a *close match* if it contains ≥ 75% of the weighted key terms and
-   ≥ 2/3 of the names and numbers. A negation ("not", "never", "denies") just before a matched word
-   in only one of the two texts makes it *opposite wording*. Weaker overlaps are *related*.
-4. **Verdict**: fact-checkers' ratings of a matching claim decide first. Otherwise **Corroborated**
-   needs close matches from ≥ 2 independent publishers (or one Wikipedia passage covering ≥ 80%),
-   **Disputed** needs ≥ 2 publishers with opposite wording, and anything else is
-   **Not enough evidence**. Results are cached for an hour.
-
 ## Example workflow
 1. `python train_model.py` → note the test metrics it prints.
-2. `streamlit run app.py` → on **Analyze**, pick the example "UK votes to leave EU" and press
-   **Analyze headline**.
-3. Read the style card (P(fake), uncertain zone) and the source card (which sources answered, which
-   publishers matched), then scroll through the highlighted passages.
-4. Open **Text insights** to see which words moved the model, and **Model performance** for the
+2. `streamlit run app.py` → on **Analyze**, pick a demo claim (e.g. the Great Wall of China one) or the
+   headline "UK votes to leave EU", and press **Analyze**.
+3. Compare the style card (P(fake), uncertain zone) with the evidence card (verdict, which sources
+   answered), then read the deciding passage and open its source.
+4. Open **Text insights** to see which words moved the style model, and **Model performance** for the
    held-out metrics.
 5. On **Batch**, download the sample CSV, upload it, and download the results.
 
 ## Limitations and ethics
+### V2
+- **Retrieval is the weak link.** If the wrong article is found, the NLI step reasons correctly about
+  the wrong text.
+- **Recent or local events** may get "Not enough evidence": Wikipedia lags, and the free news sources
+  don't cover everything. "Not enough evidence" is not a debunk.
+- **Numbers and dates**: small NLI models are weak at arithmetic and exact figures.
+- **Thresholds were tuned on 10 claims**, which is a small set. Real accuracy is lower than on the demo claims.
+- English only. Each check takes about 10–20 s on CPU (the first one ~30–45 s while models load).
+- **Word-matching fallback** can miss paraphrases ("approves" vs "passes") and contradictions that
+  use no negation word.
+
+### V1
 - **Style, not truth.** The strongest signals are writing style: Reuters headlines drop words like
-  "the"/"is" and use "says"; the fake sites use more pronouns and emotional words. A sober fake or
-  a sensational real headline will fool it.
-- **Source bias.** All "real" training items come from Reuters, so the model partly learns
-  "Reuters style". Reported metrics apply only to this dataset's held-out test split.
+  "the"/"is" and use "says"; the fake sites use more pronouns and emotional words. A sober fake or a
+  sensational real headline will fool it.
+- **Source bias.** All "real" training items come from Reuters, so the model partly learns "Reuters
+  style". Reported metrics apply only to this dataset's held-out test split.
 - **Old, narrow data.** Mostly US politics/world news from 2016–2017. New names are unknown words
   (the app warns when few words are known).
-- **Word matching, not understanding.** The source check can miss paraphrases ("approves" vs
-  "passes") and contradictions that use no negation word, and a passage can share words with a
-  claim without saying the same thing. Always read the passages it shows.
-- **Coverage gaps.** Very recent, local or niche stories may simply not be in these sources yet.
-  "Not enough evidence" is not a debunk.
-- **Privacy.** The style model runs locally. With the source check on, the headline's key terms
-  are sent to Wikipedia, GDELT and (with a key) Google. Session history stays in the browser
-  session only.
+
+### Privacy
+The style model and the NLI models run locally. With **Check evidence online** on, the claim (or its
+key words) is sent to Google Fact Check, Wikipedia and GDELT. Session history stays in the browser
+session only.
 
 ## Troubleshooting
 - *"Not trained yet"* on the Analyze page → run `python train_model.py`, then reload the page.
 - *"Dataset file not found"* → check `data/Fake.csv` and `data/True.csv` exist.
+- *Judged by: word matching* → PyTorch or sentence-transformers isn't installed (see Setup).
 - *Recent news: busy / timed out* → GDELT allows one request every 5 seconds and is often busy;
-  the other sources still answer. Try again shortly.
-- *Wikipedia: busy* → Wikimedia rate limit; wait a few seconds. Setting `TRUTHLENS_USER_AGENT`
-  with contact details helps.
-- *Fact checks: not configured* → add `GOOGLE_FACTCHECK_API_KEY` (see above).
+  the other sources still answer.
+- *Fact checks: not configured* → add the key to `.env` (see Setup).
 - Model file errors after upgrading scikit-learn → retrain.
 - Only load `.joblib` files produced by this project; joblib can run code when loading.

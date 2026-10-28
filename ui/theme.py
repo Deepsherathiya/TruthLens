@@ -240,6 +240,12 @@ a.tl-link, .tl-clip a { color: var(--tl-accent); text-underline-offset: 2px; }
   background: var(--tone-bg); color: var(--tone-ink);
 }
 .tl-rating { font: 600 .78rem/1 var(--tl-sans); color: var(--tone-ink); }
+.tl-deciding {
+  display: inline-block; margin-left: .5rem; padding: .28rem .45rem; border-radius: 3px;
+  font: 600 .66rem/1 var(--tl-sans); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--tl-paper); background: var(--tl-ink);
+}
+.tl-clip.is-deciding .tl-clip-text { font-weight: 500; }
 @media (max-width: 640px) { .tl-clip { grid-template-columns: 1fr; } .tl-clip-meta { flex-direction: row; flex-wrap: wrap; gap: .5rem; } }
 
 /* ---------- stat row ---------- */

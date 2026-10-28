@@ -4,5 +4,14 @@ scikit-learn>=1.3
 joblib>=1.3
 streamlit>=1.66      # top navigation, light/dark theme config and width= arguments
 altair>=5.0          # charts (also installed with streamlit)
-requests>=2.31       # source check: Wikipedia, GDELT, Google Fact Check APIs
+requests>=2.31       # evidence check: fact-checks, Wikipedia, news archive, GDELT
+python-dotenv>=1.0   # reads GOOGLE_FACTCHECK_API_KEY from .env
 pytest>=7.0
+
+# Evidence check with NLI models (MiniLM embeddings + DeBERTa NLI, ~270 MB, run on CPU).
+# Install the CPU build of PyTorch first (much smaller than the GPU build):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Without these the app still works and judges evidence by word matching.
+torch>=2.6
+transformers>=4.40
+sentence-transformers>=3.0
