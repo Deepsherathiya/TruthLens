@@ -1,11 +1,12 @@
 """
 Single entry point for the UI: analyze(text, mode) -> result dict.
 
-V1 implements mode="style". V2 will add mode="evidence" here without
-changing the result format (see core/schema.py).
+mode="style"    -> V1 TF-IDF classifier (writing style)
+mode="evidence" -> V2 Fact Check API + Wikipedia + NLI
+Both return the same result format (see core/schema.py).
 """
 
-from core.preprocessing import validate_input
+from core.preprocessing import question_to_statement, validate_input
 from core.schema import empty_result
 from core import style_model
 
@@ -24,8 +25,12 @@ def analyze(text: str, mode: str = "style", pipeline=None) -> dict:
                 pipeline = style_model.load_pipeline()
             return style_model.predict_style(pipeline, text, result)
         if mode == "evidence":
-            result["error"] = "Evidence mode is not built yet (planned for V2)."
-            return result
+            from core.evidence import check_claim  # heavy imports only when needed
+            claim, changed = question_to_statement(text)
+            result["cleaned"] = claim
+            if changed:
+                result["warnings"].append(f'Question rewritten as a statement: "{claim}"')
+            return check_claim(claim, result)
         result["error"] = f"Unknown mode: {mode}"
     except style_model.ModelNotTrainedError as e:
         result["error"] = str(e)

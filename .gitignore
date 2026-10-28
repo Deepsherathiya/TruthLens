@@ -10,3 +10,6 @@ models/
 
 # Local tool config
 .claude/
+
+# Secrets (API keys)
+.env

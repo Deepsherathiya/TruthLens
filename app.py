@@ -1,5 +1,5 @@
 """
-TruthLens - simple demo dashboard (V1). To be polished later.
+TruthLens - simple demo dashboard (V1 style model + V2 evidence check). To be polished later.
 
 Run:  streamlit run app.py
 """
@@ -11,7 +11,8 @@ import streamlit as st
 
 from core import style_model
 from core.analyze import analyze
-from core.schema import DISCLAIMER, FAKE, REAL
+from check_demo_claims import DEMO_CLAIMS
+from core.schema import DISCLAIMER, FAKE, NOT_ENOUGH, REAL, REFUTED, SUPPORTED
 
 MAX_BATCH_ROWS = 2000
 EXAMPLES = [
@@ -35,20 +36,64 @@ def get_pipeline():
 pipeline = get_pipeline()
 st.session_state.setdefault("history", [])
 st.session_state.setdefault("headline", "")
+st.session_state.setdefault("claim", "")
 
 st.title("🔎 TruthLens")
-st.caption("NLP-Powered News Analysis · V1 demo")
+st.caption("NLP-Powered News Analysis · demo")
 
 if pipeline is None:
     st.error("No trained model found. Put Fake.csv and True.csv in data/ and run `python train_model.py`.")
     st.stop()
 
-tab_analyze, tab_batch, tab_perf = st.tabs(["Analyze", "Batch CSV", "Model Performance"])
+tab_evidence, tab_analyze, tab_batch, tab_perf = st.tabs(
+    ["Evidence Check (V2)", "Style Analysis (V1)", "Batch CSV", "Model Performance"]
+)
 
 
 def badge(verdict: str) -> str:
-    icon = {REAL: "✅", FAKE: "⚠️"}.get(verdict, "❔")
+    icon = {REAL: "✅", FAKE: "⚠️", SUPPORTED: "✅", REFUTED: "❌", NOT_ENOUGH: "❔"}.get(verdict, "❔")
     return f"{icon} {verdict}"
+
+
+STANCE_ICON = {"supports": "🟢 supports", "refutes": "🔴 refutes", "neutral": "⚪ neutral"}
+
+# ---------------- Evidence Check (V2) ----------------
+with tab_evidence:
+    st.write("Checks a claim against **published fact-checks** (Google Fact Check API) and "
+             "**Wikipedia**, then uses an NLI model to judge whether the evidence supports or refutes it.")
+    def use_demo_claim():
+        if st.session_state.demo_pick != "—":
+            st.session_state.claim = st.session_state.demo_pick
+
+    st.selectbox("Try a demo claim", ["—"] + [c for c, _ in DEMO_CLAIMS],
+                 key="demo_pick", on_change=use_demo_claim)
+    claim = st.text_area("Claim (a statement, not a question)", key="claim", height=80, max_chars=300)
+
+    if st.button("Check claim", type="primary"):
+        with st.spinner("Searching fact-checks and Wikipedia… (first run loads the models, ~30 s)"):
+            r = analyze(claim, mode="evidence")
+        if r["error"]:
+            st.warning(r["error"])
+        else:
+            st.subheader(badge(r["verdict"]))
+            if r["verdict"] != NOT_ENOUGH:
+                st.caption(f"Model-estimated confidence of the deciding evidence: {r['confidence']:.0%}")
+            for w in r["warnings"]:
+                st.info(w)
+
+            st.write("**Evidence**" if r["evidence"] else "No relevant evidence found.")
+            for e in r["evidence"]:
+                with st.container(border=True):
+                    st.markdown(f"{STANCE_ICON[e['stance']]} · {e['score']:.0%} · [{e['source']}]({e['url']})")
+                    st.write(e["sentence"])
+
+            # Side-by-side with the V1 style model, for the demo comparison.
+            v1 = analyze(claim, mode="style", pipeline=pipeline)
+            if not v1["error"]:
+                st.caption(f"For comparison, the V1 style model says: **{v1['verdict']}** "
+                           f"(P(Fake) {v1['probabilities'][FAKE]:.0%}) — based on wording only, no evidence.")
+    st.caption("Evidence-based, but still automated: retrieval can miss or pick the wrong article. "
+               "Always open the sources.")
 
 
 # ---------------- Analyze ----------------
