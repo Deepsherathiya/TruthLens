@@ -133,3 +133,24 @@ def test_wikipedia_adds_life_fact_for_people(monkeypatch):
     assert error is None
     assert sentences[0]["sentence"] == "Narendra Modi is alive."
     assert "Living people" in sentences[0]["title"]
+
+
+def test_best_known_person_checks_the_title(monkeypatch):
+    # Sorted by incoming links; "Manmohan Singh" matched "intitle:kohli" through a redirect.
+    monkeypatch.setattr(retrieval, "_wiki_best_known",
+                        lambda q: ("Manmohan Singh", "Virat Kohli", "Rahul Dravid", "Kohli family"))
+    monkeypatch.setattr(retrieval, "_wiki_categories", lambda titles: tuple(
+        (t, ("Category:Living people",) if t != "Kohli family" else ()) for t in titles))
+    assert retrieval.best_known_person(("kohli",)) == "Virat Kohli"
+    assert retrieval.best_known_person(("rahul",)) is None  # one word must be the surname
+    assert retrieval.best_known_person(("virat", "kohli")) == "Virat Kohli"
+
+
+def test_death_claim_about_a_surname_uses_the_full_name(monkeypatch):
+    # Regression: "modi died" was Supported by "Krishan Kumar Modi died in 2019."
+    from core import evidence
+    monkeypatch.setattr(retrieval, "best_known_person",
+                        lambda name: "Narendra Modi" if name in {("modi",), ("narendra", "modi")} else None)
+    assert evidence.name_in_full("modi died") == ("Narendra Modi died", "Narendra Modi")
+    assert evidence.name_in_full("Narendra Modi died") == ("Narendra Modi died", None)
+    assert evidence.name_in_full("Modi visits Japan") == ("Modi visits Japan", None)  # not a death claim

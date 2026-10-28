@@ -8,6 +8,7 @@ joblib files can execute code when loaded, so never load untrusted ones.
 
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,6 +23,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # If the fake probability falls in this band, we say "Uncertain"
 # instead of forcing a Real/Fake call.
 UNCERTAIN_BAND = (0.40, 0.60)
+# "modi died" has no writing style to judge; headlines usually have 6+ words.
+MIN_WORDS = 4
 TOP_N_WORDS = 8
 
 
@@ -136,6 +139,12 @@ def predict_style(pipeline, text: str, result: dict) -> dict:
         result["verdict"] = UNCERTAIN
         result["warnings"].append(
             "None of these words appear in the training data, so the model has nothing to go on."
+        )
+    elif len(re.findall(r"\w\w+", cleaned)) < MIN_WORDS:  # same words TF-IDF counts
+        result["verdict"] = UNCERTAIN
+        result["warnings"].append(
+            f"Too short to judge the writing style (fewer than {MIN_WORDS} words). "
+            "Use the evidence check for short claims."
         )
     elif UNCERTAIN_BAND[0] <= fake_p <= UNCERTAIN_BAND[1]:
         result["verdict"] = UNCERTAIN

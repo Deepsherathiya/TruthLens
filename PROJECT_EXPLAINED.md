@@ -116,6 +116,9 @@ the two to justify our choice.
 
 - If the probability is close to 50/50 (between 40% and 60%), the app says **Uncertain** instead
   of forcing an answer.
+- If the text has fewer than 4 words (e.g. "modi died"), it also says **Uncertain**: there is no
+  writing style to judge. Before this rule, "modi died" came out "Likely Real", only because
+  newspapers often write "X dies". The evidence check is the right tool for short claims.
 - The app shows a chart of the words that influenced the decision.
 
 ### How we tested it
@@ -146,6 +149,13 @@ is nothing to contradict the claim directly. But Wikipedia files every biography
 *"Living people"* or a category like *"2024 deaths"*. For a person, the app turns this into one plain
 sentence, *"Narendra Modi is alive."*, and lets the NLI model judge it like any other evidence. The
 model sees that "is alive" contradicts "committed suicide", so the claim is **Refuted**.
+
+**Which Modi?** A name can refer to many people. For *"modi died"*, Wikipedia's search returned
+businessmen of the Modi Group who really did die, so the app first said **Supported**. A reader means
+the best-known Modi. So when a death claim gives only a surname, the app picks the Wikipedia biography
+that most other articles link to (Narendra Modi), checks *"Narendra Modi died"* instead, and tells
+the user it did. This is a simple form of **entity linking**: deciding which real-world person a name
+in the text refers to.
 
 ### Step 2: Find the most relevant sentences (sentence embeddings)
 
@@ -262,6 +272,7 @@ The words it relies on most show it learned **style**: "says", "sc" (Supreme Cou
 | Sentence embeddings (MiniLM) | Find evidence sentences with similar meaning |
 | Cosine similarity | Measures how close two sentence meanings are |
 | Natural Language Inference (DeBERTa) | Decides whether evidence supports or contradicts the claim |
+| Entity linking (simple) | Decides which person a name like "Modi" refers to |
 
 **Tech used:** Python, scikit-learn, Hugging Face Transformers, Sentence-Transformers, Streamlit.
 

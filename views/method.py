@@ -1,7 +1,7 @@
 """Method: how both signals work, what is sent online, and the limits."""
 
 from core import evidence, nli_evidence, nlp_models
-from core.style_model import UNCERTAIN_BAND
+from core.style_model import MIN_WORDS, UNCERTAIN_BAND
 from ui import components as ui, state
 
 
@@ -32,8 +32,9 @@ def render() -> None:
       (“Fact Check: No, this photo is not…”), so words such as “fact check”, “false” and “viral” are
       removed from it first; otherwise the model would learn to spot fact-check articles. Multinomial
       Naive Bayes is trained on the same split for comparison.</li>
-    <li><strong>Uncertain zone.</strong> If P(fake) is between {lo:.0%} and {hi:.0%}, or none of the
-      words were seen in training, the answer is <em>Uncertain</em> instead of a forced call.</li>
+    <li><strong>Uncertain zone.</strong> If P(fake) is between {lo:.0%} and {hi:.0%}, none of the
+      words were seen in training, or the text has fewer than {MIN_WORDS} words (“modi died” has no
+      writing style to judge), the answer is <em>Uncertain</em> instead of a forced call.</li>
     <li><strong>Explanation.</strong> Each word's contribution is its TF-IDF value times the model's
       coefficient; positive pushes toward fake.</li>
   </ol>
@@ -46,7 +47,9 @@ def render() -> None:
       last three months). Simple yes/no questions are first rewritten as statements. For an article
       about a person, Wikipedia's categories add one sentence such as “Narendra Modi is alive.”
       (<em>Living people</em>) or “Ratan Tata died in 2024.” (<em>2024 deaths</em>), so death hoaxes
-      can be refuted even though no article says “he did not die”.</li>
+      can be refuted even though no article says “he did not die”. A death claim that gives only a
+      surname (“modi died”) is checked about the best-known person with that name (the Wikipedia
+      biography most other articles link to), and the app says who it checked.</li>
     <li><strong>Fact-checks.</strong> A fact-check only counts if it is about the <em>same</em> claim:
       similar meaning and, in the logically valid direction, one statement implies the other
       (rated False: our claim must imply the checked claim; rated True: the reverse).</li>

@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
-from core import nlp_models, sources
+from core import nlp_models, retrieval, sources
 from core.nli_evidence import rating_to_stance
 from core.preprocessing import normalise, question_to_statement
 from core.schema import NEUTRAL, NOT_ENOUGH, REFUTED, REFUTES, SUPPORTED, SUPPORTS
@@ -60,6 +60,10 @@ REPORTING_WORDS = {"say", "says", "said", "saying", "report", "reports", "report
                    "tells", "told", "new", "news", "just", "watch", "breaking",
                    "video", "latest", "live", "update", "exclusive", "via"}
 STOP_WORDS = (ENGLISH_STOP_WORDS | REPORTING_WORDS) - NEGATIONS
+# A claim that someone died; what is left after these and stop words is the name.
+DEATH_WORDS = {"die", "died", "dies", "dead", "death", "deceased", "demise", "suicide", "suicides",
+               "killed", "murdered", "assassinated", "shot", "hanged", "passed", "passes", "away",
+               "commits", "committed"}
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
@@ -129,6 +133,31 @@ def parse_claim(text: str) -> dict:
         "negated": any(w.lower() in NEGATIONS for w in words),
         "keywords": [originals[s] for s in ranked],
     }
+
+
+def name_in_full(text: str) -> tuple[str, str | None]:
+    """
+    "modi died" -> ("Narendra Modi died", "Narendra Modi"). Wikipedia's search
+    ranks pages where "Modi" and "died" appear together, so it found Modi Group
+    businessmen who did die. A reader means the best-known person with that
+    name, so a death claim is checked about them, and the app says so.
+    """
+    words = [w.lower() for w in tokens(text)]
+    if not DEATH_WORDS & set(words):
+        return text, None
+    name = tuple(w for w in words if w not in DEATH_WORDS and w not in STOP_WORDS)
+    if not 1 <= len(name) <= 3:
+        return text, None
+    person = retrieval.best_known_person(name)
+    if person is None:
+        return text, None
+    full = re.sub(r"\s*\(.*\)$", "", person)
+    if tuple(full.lower().split()) == name:
+        return text, None  # already the full name
+    named = re.compile(r"\b" + r"\W+".join(map(re.escape, name)) + r"\b", re.I)
+    if not named.search(text):
+        return text, None  # the name words are not next to each other
+    return named.sub(full, text, count=1), person
 
 
 def match(claim: dict, passage: str) -> dict:
@@ -350,15 +379,21 @@ def check_sources(text: str, result: dict, api_key: str | None = None,
     claim_text, changed = question_to_statement(text)
     if changed:
         result["warnings"].append(f'Question rewritten as a statement: "{claim_text}"')
+
+    engine = engine or os.environ.get("TRUTHLENS_ENGINE") or (
+        "nli" if fetchers is None and nlp_models.available() else "words")
+    if engine == "nli":  # only the NLI engine can use Wikipedia's living/deaths facts
+        claim_text, person = name_in_full(claim_text)
+        if person:
+            result["warnings"].append(f'Checked as "{claim_text}": {person} is the best-known person '
+                                      "with that name on Wikipedia.")
+
     claim = parse_claim(claim_text)
     result["cleaned"] = normalise(claim_text)
     result["keywords"] = claim["keywords"][:6]
     if len(claim["terms"]) < MIN_MATCHED_TERMS:
         result["error"] = "Not enough distinctive words to search for. Try a more specific headline."
         return result
-
-    engine = engine or os.environ.get("TRUTHLENS_ENGINE") or (
-        "nli" if fetchers is None and nlp_models.available() else "words")
     result["engine"] = engine
     if engine == "nli":
         warnings_before = list(result["warnings"])

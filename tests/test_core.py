@@ -72,6 +72,12 @@ def test_valid_prediction_and_class_mapping(pipeline):
     assert fake["probabilities"][FAKE] > fake["probabilities"][REAL]
 
 
+def test_too_short_to_judge_style(pipeline):
+    # Regression: "modi died" came out Likely Real; two words have no writing style.
+    r = analyze("Senate talks", pipeline=pipeline)
+    assert r["verdict"] == UNCERTAIN and "Too short" in r["warnings"][0]
+
+
 def test_result_has_insights(pipeline):
     r = analyze("Senate says trade talks will continue", pipeline=pipeline)
     assert r["stats"]["words"] == 6 and 0 < r["stats"]["known_word_ratio"] <= 1

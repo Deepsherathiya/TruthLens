@@ -125,7 +125,10 @@ If the app is already open when you train, just reload the page: it picks up the
    - **Wikipedia**: top 3 articles for the claim, split into sentences. For a person, one more
      sentence comes from the article's categories: *"Narendra Modi is alive."* ("Living people") or
      *"Ratan Tata died in 2024."* ("2024 deaths"). No article says "Modi did not commit suicide", so
-     without it death hoaxes could only get *Not enough evidence*.
+     without it death hoaxes could only get *Not enough evidence*. A death claim with only a surname
+     (*"modi died"*) is checked about the best-known person with that name (the biography with the
+     most incoming links whose title ends in it: Narendra Modi), and the app says so. Otherwise
+     Wikipedia's search found Modi Group businessmen who did die and the claim came out *Supported*.
    - **News archive**: Wikipedia's daily *Current events* pages, back to the early 2000s. Each item
      cites the outlet that reported it (Reuters, BBC, …), which is shown as the publisher.
    - **Recent news**: GDELT, worldwide news from about the last 3 months (often busy; optional).
@@ -169,7 +172,8 @@ anthem, 5G coronavirus) are only refuted by published fact-checks, so they come 
    split for comparison. Precision/recall treat **fake** as the positive class.
 4. **Explanation**: for each word present in the headline, `tfidf_value × coefficient`.
    Positive pushes toward Fake, negative toward Real. Unseen words get no score.
-5. **Uncertain**: if P(fake) is between 0.40 and 0.60, or none of the words were seen in training.
+5. **Uncertain**: if P(fake) is between 0.40 and 0.60, none of the words were seen in training, or
+   the text has fewer than 4 words (a two-word claim like "modi died" has no writing style to judge).
 
 ## Example workflow
 1. `python train_model.py` → note the test metrics it prints.
