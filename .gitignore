@@ -8,5 +8,8 @@ venv/
 data/*.csv
 models/
 
+# API keys (Google Fact Check) live here; never commit them
+.streamlit/secrets.toml
+
 # Local tool config
 .claude/

@@ -7,6 +7,8 @@ joblib files can execute code when loaded, so never load untrusted ones.
 """
 
 import json
+import os
+from functools import lru_cache
 from pathlib import Path
 
 import joblib
@@ -15,8 +17,7 @@ import numpy as np
 from core.preprocessing import clean_title
 from core.schema import MODEL_LABEL_TO_VERDICT, UNCERTAIN
 
-MODEL_PATH = Path("models/news_pipeline.joblib")
-METRICS_PATH = Path("models/metrics.json")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # If the fake probability falls in this band, we say "Uncertain"
 # instead of forcing a Real/Fake call.
@@ -28,19 +29,41 @@ class ModelNotTrainedError(FileNotFoundError):
     pass
 
 
-def load_pipeline(path: Path = MODEL_PATH):
-    if not Path(path).exists():
+def model_dir() -> Path:
+    """models/ next to this project, or $TRUTHLENS_MODEL_DIR if set."""
+    return Path(os.environ.get("TRUTHLENS_MODEL_DIR", PROJECT_ROOT / "models"))
+
+
+def model_path() -> Path:
+    return model_dir() / "news_pipeline.joblib"
+
+
+def metrics_path() -> Path:
+    return model_dir() / "metrics.json"
+
+
+def load_pipeline(path: Path | None = None):
+    path = Path(path or model_path())
+    if not path.exists():
         raise ModelNotTrainedError(
             f"Model file not found at {path}. Run `python train_model.py` first."
         )
     return joblib.load(path)
 
 
-def load_metrics(path: Path = METRICS_PATH) -> dict | None:
-    if not Path(path).exists():
+def load_metrics(path: Path | None = None) -> dict | None:
+    path = Path(path or metrics_path())
+    if not path.exists():
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+@lru_cache(maxsize=4)
+def _feature_names(tfidf) -> np.ndarray:
+    # Building this array sorts the whole vocabulary, so do it once per model
+    # instead of once per headline (matters for batch analysis).
+    return tfidf.get_feature_names_out()
 
 
 def explain(pipeline, cleaned: str, top_n: int = TOP_N_WORDS) -> list[dict]:
@@ -58,13 +81,29 @@ def explain(pipeline, cleaned: str, top_n: int = TOP_N_WORDS) -> list[dict]:
     # coef_ points toward classes_[1]; flip it if that class isn't "fake".
     sign = 1.0 if clf.classes_[1] == "fake" else -1.0
     coef = clf.coef_[0] * sign
-    vocab = tfidf.get_feature_names_out()
+    vocab = _feature_names(tfidf)
     scores = vec.data * coef[vec.indices]
     terms = [
         {"term": str(vocab[i]), "score": round(float(s), 4)}
         for i, s in zip(vec.indices, scores)
     ]
     terms.sort(key=lambda t: abs(t["score"]), reverse=True)
+    return terms[:top_n]
+
+
+def top_tfidf_terms(pipeline, cleaned: str, top_n: int = TOP_N_WORDS) -> list[dict]:
+    """
+    The headline's own most distinctive terms (highest TF-IDF weight),
+    regardless of which class they point to. Rare words weigh more.
+    """
+    tfidf = pipeline.named_steps["tfidf"]
+    vec = tfidf.transform([cleaned])
+    vocab = _feature_names(tfidf)
+    terms = [
+        {"term": str(vocab[i]), "weight": round(float(w), 4)}
+        for i, w in zip(vec.indices, vec.data)
+    ]
+    terms.sort(key=lambda t: t["weight"], reverse=True)
     return terms[:top_n]
 
 
@@ -92,6 +131,7 @@ def predict_style(pipeline, text: str, result: dict) -> dict:
     result["confidence"] = round(float(max(proba)), 4)
 
     ratio = known_word_ratio(pipeline, cleaned)
+    result["stats"]["known_word_ratio"] = round(ratio, 4)
     if ratio == 0:
         result["verdict"] = UNCERTAIN
         result["warnings"].append(
@@ -108,10 +148,19 @@ def predict_style(pipeline, text: str, result: dict) -> dict:
             )
 
     result["word_contributions"] = explain(pipeline, cleaned)
+    result["tfidf_terms"] = top_tfidf_terms(pipeline, cleaned)
     return result
 
 
-def predict_batch(pipeline, texts: list[str]) -> list[dict]:
-    """Predict many headlines; output list is aligned 1:1 with the input."""
+def predict_batch(pipeline, texts: list[str], on_progress=None) -> list[dict]:
+    """
+    Predict many headlines; output list is aligned 1:1 with the input.
+    on_progress(done, total) is called every 50 rows if given.
+    """
     from core.analyze import analyze  # local import avoids a circular import
-    return [analyze(t, mode="style", pipeline=pipeline) for t in texts]
+    results = []
+    for i, t in enumerate(texts, start=1):
+        results.append(analyze(t, mode="style", pipeline=pipeline))
+        if on_progress and (i % 50 == 0 or i == len(texts)):
+            on_progress(i, len(texts))
+    return results

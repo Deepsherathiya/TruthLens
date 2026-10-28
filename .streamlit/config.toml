@@ -1,0 +1,47 @@
+# Streamlit settings for TruthLens. Colours here must match ui/theme.py.
+
+[server]
+maxUploadSize = 5            # MB; batch CSV limit (also checked in views/batch.py)
+
+[browser]
+gatherUsageStats = false     # don't send usage statistics to Streamlit
+
+[client]
+toolbarMode = "viewer"       # hide the Deploy/Rerun developer buttons
+
+[theme]
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
+headingFont = "Newsreader:https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;600;700&display=swap, serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+baseRadius = "4px"
+buttonRadius = "4px"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#1D3A5F"
+backgroundColor = "#F7F5F0"
+secondaryBackgroundColor = "#EFEBE2"
+textColor = "#16181D"
+borderColor = "#DAD4C6"
+linkColor = "#1D3A5F"
+codeBackgroundColor = "#EFEBE2"
+dataframeHeaderBackgroundColor = "#EFEBE2"
+dataframeBorderColor = "#DAD4C6"
+greenColor = "#14805A"
+redColor = "#C2412D"
+orangeColor = "#A8741A"
+
+[theme.dark]
+primaryColor = "#4F7DB8"
+backgroundColor = "#15171B"
+secondaryBackgroundColor = "#1F2228"
+textColor = "#ECE8DF"
+borderColor = "#30343B"
+linkColor = "#9DB8DA"
+codeBackgroundColor = "#1F2228"
+dataframeHeaderBackgroundColor = "#1F2228"
+dataframeBorderColor = "#30343B"
+greenColor = "#2F9D74"
+redColor = "#E2674F"
+orangeColor = "#C9962F"

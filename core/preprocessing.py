@@ -26,8 +26,10 @@ _PREFIX_TAGS = [
     "not kidding", "video", "wow", "factbox", "exclusive", "highlights",
     "timeline", "instant view", "explainer", "breakingviews",
 ]
+# The tag must be followed by a colon ("WATCH: ...") or a spaced dash
+# ("WATCH - ..."), so ordinary words like "Watch-list" are left alone.
 _PREFIX = re.compile(
-    r"^\s*(" + "|".join(re.escape(t) for t in _PREFIX_TAGS) + r")\s*[:\-–—]\s*",
+    r"^\s*(" + "|".join(re.escape(t) for t in _PREFIX_TAGS) + r")(?:\s*:|\s+-)\s*",
     re.IGNORECASE,
 )
 
@@ -41,11 +43,16 @@ _PUNCT_MAP = str.maketrans({
 _WHITESPACE = re.compile(r"\s+")
 
 # "u.s." -> "us", "u.n." -> "un": Reuters writes "U.S.", fake sites write "US".
-_ACRONYM = re.compile(r"\b((?:[a-z]\.){2,})")
+_ACRONYM = re.compile(r"\b((?:[a-zA-Z]\.){2,})")
+
+_WORD = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?")
 
 
-def clean_title(text: str) -> str:
-    """Normalise a headline. Returns "" for empty/None input."""
+def normalise(text: str) -> str:
+    """
+    Remove source artifacts and tidy whitespace, but keep the original case.
+    Evidence mode needs the case to spot names ("Paris", "NATO").
+    """
     if not isinstance(text, str):
         return ""
     text = unicodedata.normalize("NFKC", text).translate(_PUNCT_MAP)
@@ -56,19 +63,43 @@ def clean_title(text: str) -> str:
         if stripped == text:
             break
         text = stripped
+    text = _WHITESPACE.sub(" ", text).strip()
+    return _ACRONYM.sub(lambda m: m.group(1).replace(".", ""), text)
+
+
+def clean_title(text: str) -> str:
+    """Normalise a headline for the model. Returns "" for empty/None input."""
     # Lowercase removes the ALL-CAPS signal (common in fake titles only).
     # Negations like "not"/"never" are kept: no stop-word removal.
-    text = _WHITESPACE.sub(" ", text).strip().lower()
-    text = _ACRONYM.sub(lambda m: m.group(1).replace(".", ""), text)
-    return text
+    return normalise(text).lower()
 
 
-def validate_input(text: str) -> str | None:
+def validate_input(text) -> str | None:
     """Return an error message for bad user input, or None if it's fine."""
-    if text is None or not str(text).strip():
+    if not isinstance(text, str) or not text.strip():
         return "Please enter a headline."
     if len(text) > MAX_INPUT_CHARS:
         return f"Headline is too long ({len(text)} characters). Max is {MAX_INPUT_CHARS}."
     if not clean_title(text):
         return "Nothing left to analyse after cleaning. Try a real headline."
     return None
+
+
+def text_stats(text: str) -> dict:
+    """
+    Simple descriptive statistics of the raw headline.
+    These describe writing style only; they are not evidence of truth.
+    """
+    text = text.strip()
+    words = _WORD.findall(text)
+    return {
+        "words": len(words),
+        "characters": len(text),
+        "avg_word_length": round(sum(map(len, words)) / len(words), 1) if words else 0.0,
+        # Shouting in capitals is a style cue the model can no longer see
+        # (clean_title lowercases), but it is useful to point out. Two-letter
+        # words are skipped so "UK"/"EU" don't count as shouting.
+        "all_caps_words": sum(1 for w in words if len(w) > 2 and w.isupper() and w.isalpha()),
+        "exclamations": text.count("!"),
+        "questions": text.count("?"),
+    }
