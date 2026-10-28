@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Dataset (download separately) and generated model files
+data/*.csv
+models/
+
+# Local tool config
+.claude/
