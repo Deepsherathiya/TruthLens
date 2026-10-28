@@ -55,8 +55,20 @@ flowchart LR
 
 ### Dataset
 
-We trained on the **ISOT Fake News Dataset**: about 45,000 news articles from 2016–17. Real news is
-from Reuters, and fake news is from websites flagged by fact-checkers. We use **only the headlines**.
+We trained on two datasets and use **only the headlines**:
+- **ISOT Fake News Dataset** (US news, 2016–17): about 45,000 articles. Real news is from Reuters,
+  and fake news is from websites flagged by fact-checkers.
+- **Indian Fake News Dataset (IFND)** (Indian news, 2013–21): about 56,700 headlines. Real news is
+  from Indian newspapers (The Tribune, The Statesman, ThePrint, …), and fake news is from Indian
+  fact-checkers (Alt News, BOOM, India Today, …). We added it so the model knows Indian names and
+  topics (RBI, ISRO, MSP, Lok Sabha), which the US-only model had never seen.
+
+**Cleaning IFND.** Two problems in IFND would have let the model score well for the wrong reason:
+- About 81% of its "fake" headlines are written by fact-checkers, such as *"Fact Check: No, this photo
+  is not from Kashmir"*. The model would learn to spot the words "fact check" instead of fake news.
+  So we remove words like "fact check", "false", "viral", "hoax" and "claim" from every IFND headline.
+- Its apostrophes are broken in a different way in each class (`Ûª` in real rows, `â€™` in fake
+  rows), so the model could tell the classes apart from junk characters. We repair them first.
 
 ### Step 1: Text cleaning
 
@@ -109,9 +121,10 @@ the two to justify our choice.
 ### How we tested it
 
 Before splitting, we removed duplicate headlines so the same headline couldn't appear in both parts.
-This left **38,716 headlines** (20,816 real, 17,900 fake) out of 44,898. We split them: **80% to
-train** (30,972) and **20% to test** (7,744 headlines the model has never seen). We measure
-**accuracy, precision, recall and F1 score**.
+This left **87,239 headlines** (48,523 Indian and 38,716 US; 53,235 real and 34,004 fake). We split
+them: **80% to train** (69,791) and **20% to test** (17,448 headlines the model has never seen),
+keeping the same mix of datasets and classes in both parts. We measure **accuracy, precision, recall
+and F1 score**, overall and separately for Indian and US headlines.
 
 ---
 
@@ -194,17 +207,27 @@ calmly, but the evidence check can.
 
 ## 7. Results
 
-**Writing-style classifier** (7,744 test headlines; "fake" is the positive class):
+**Writing-style classifier** (17,448 test headlines; "fake" is the positive class):
 
 | Model | Accuracy | Precision | Recall | F1 |
 |---|---|---|---|---|
-| Logistic Regression | 94.07% | 94.96% | 92.07% | 93.49% |
-| Naive Bayes | 93.88% | 93.80% | 92.91% | 93.35% |
+| Logistic Regression | 92.00% | 92.41% | 86.60% | 89.41% |
+| Naive Bayes | 92.15% | 93.25% | 86.10% | 89.53% |
 
-Logistic Regression is slightly better on accuracy, precision and F1, and it gives clearer
-per-word explanations, so the app uses it. The words it relies on most show it learned **style**:
-"says", "us", "eu" and "senate" push toward real (Reuters' headline habits), while "hillary", "just",
-"you" and "this" push toward fake.
+| Logistic Regression, by dataset | Test headlines | Accuracy | F1 |
+|---|---|---|---|
+| Indian news (IFND) | 9,705 | 91.87% | 87.36% |
+| US news (ISOT) | 7,743 | 92.17% | 91.26% |
+
+The two models score almost the same. We use Logistic Regression because it gives a clear weight for
+every word (so the app can explain each prediction) and well-behaved probabilities (needed for the
+"Uncertain" zone). Trained on US news alone, the model scored 94.07% on US headlines; adding Indian
+news costs about 2 points there but lets the model read Indian headlines. On 16 new Indian headlines
+we wrote ourselves, it recognised 83–100% of the words instead of 50–92%.
+
+The words it relies on most show it learned **style**: "says", "sc" (Supreme Court), "probe",
+"centre" and "court" push toward real (newspaper habits), while "video", "photo", "old", "image" and
+"hillary" push toward fake (Indian misinformation is often an old or edited photo or video).
 
 **Evidence check** (10 test claims):
 - 10/10 correct with the Fact Check API key. These claims were also used to tune the settings, so
@@ -219,7 +242,8 @@ per-word explanations, so the app uses it. The words it relies on most show it l
 
 - **Style is not truth.** The classifier learns how fake websites *write*, not whether a story is
   true.
-- **Old, narrow data.** The training data is mostly 2016–17 US politics.
+- **Old data.** US news from 2016–17 and Indian news from 2013–21. Even after cleaning, the Indian
+  fake headlines are mostly fact-checkers' wording, so words like "photo" and "video" lean fake.
 - **Search can miss.** If the wrong article is found, the evidence check reasons about the wrong text.
 - **Recent or local news** may not be covered in any source yet.
 

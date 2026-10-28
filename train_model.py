@@ -1,9 +1,11 @@
 """
 Train the TruthLens V1 headline classifier.
 
-Usage (ISOT dataset, labels come from the file names):
+Usage (ISOT dataset, labels come from the file names; adds the Indian Fake
+News Dataset automatically if data/IFND.csv exists):
     python train_model.py
     python train_model.py --fake data/Fake.csv --real data/True.csv --title-col title
+    python train_model.py --no-ifnd          # ISOT only
 
 Usage (any single CSV with a text column and a label column):
     python train_model.py --csv data/news.csv --text-col headline --label-col label \
@@ -16,6 +18,7 @@ Outputs (in models/, or --out):
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -42,9 +45,28 @@ TEST_SIZE = 0.2
 POSITIVE = "fake"            # precision/recall are reported for the "fake" class
 LABEL_ORDER = ["real", "fake"]  # row/column order of the confusion matrix
 MAX_MISCLASSIFIED = 25
+IFND_FILE = ROOT / "data" / "IFND.csv"
+
+# IFND mixes three text encodings, so curly quotes became junk such as
+# "Modiâ\x80\x99s" (only in fake rows) and "yearÛªs" (only in real rows).
+# Junk that differs by class is a shortcut, so junk between two letters
+# becomes an apostrophe and any other junk a space.
+_JUNK_IN_WORD = re.compile(r"(?<=[A-Za-z])[^\x00-\x7f]+(?=[A-Za-z])")
+_JUNK = re.compile(r"[^\x00-\x7f]+")
+# Most IFND "fake" rows are fact-checkers' headlines about a fake claim
+# ("Fact Check: ...", "No, this is not a photo of ..."). Their wording would
+# teach the model to spot fact-check articles rather than fake claims, so it
+# is removed from every IFND row, like the [VIDEO] tags in ISOT.
+_DEBUNK = re.compile(
+    r"(?:^|:)\s*no\b[,:]?|\bfact[\s-]?check(?:ed|s)?\b|\bfake news\b|\bfake\b|\bfalse(?:ly)?\b|"
+    r"\bmisleading\b|\bviral\b|\bhoax(?:es)?\b|\bmorphed\b|\bdoctored\b|\bdebunk(?:ed|s)?\b|"
+    r"\brumou?rs?\b|\bmisattributed\b|\btruth\b|\bmyths?\b|\bclaim(?:s|ed|ing)?\b|\bshared (?:with|as)\b|"
+    r"\bpeddled\b|\bpassed off\b|\bhere(?:'s| is) the\b",
+    re.I,
+)
 
 
-def read_csv(path: Path) -> pd.DataFrame:
+def read_csv(path: Path, encoding: str = "utf-8") -> pd.DataFrame:
     """Read a CSV or exit with a plain-language message."""
     if not path.exists():
         sys.exit(
@@ -53,7 +75,7 @@ def read_csv(path: Path) -> pd.DataFrame:
             "and place both files in the data/ folder, or pass --csv for your own file."
         )
     try:
-        return pd.read_csv(path)
+        return pd.read_csv(path, encoding=encoding)
     except pd.errors.EmptyDataError:
         sys.exit(f"{path} is empty.")
     except (pd.errors.ParserError, UnicodeDecodeError) as e:
@@ -67,8 +89,28 @@ def load_isot(fake_path: Path, real_path: Path, title_col: str = "title") -> pd.
         df = read_csv(path)
         if title_col not in df.columns:
             sys.exit(f"{path} has no '{title_col}' column. Columns found: {list(df.columns)}")
-        frames.append(pd.DataFrame({"title": df[title_col], "label": label}))
+        frames.append(pd.DataFrame({"title": df[title_col], "label": label, "source": "ISOT"}))
     return pd.concat(frames, ignore_index=True)
+
+
+def repair_ifnd(text: str) -> str:
+    return _JUNK.sub(" ", _JUNK_IN_WORD.sub("'", str(text)))
+
+
+def strip_debunk(text: str) -> str:
+    return _DEBUNK.sub(" ", text)
+
+
+def load_ifnd(path: Path) -> pd.DataFrame:
+    """Indian Fake News Dataset: "Statement" headlines labelled TRUE / Fake."""
+    df = read_csv(path, encoding="latin-1")  # not valid UTF-8 (see _JUNK_IN_WORD)
+    missing = [c for c in ("Statement", "Label") if c not in df.columns]
+    if missing:
+        sys.exit(f"{path} is missing column(s) {missing}. Columns found: {list(df.columns)}")
+    label = df["Label"].map(_label_text).map({"true": "real", "fake": "fake"})
+    title = df["Statement"].map(repair_ifnd)
+    out = pd.DataFrame({"title": title, "text": title.map(strip_debunk), "label": label, "source": "IFND"})
+    return out[label.notna()]
 
 
 def _label_text(value) -> str:
@@ -97,14 +139,17 @@ def load_labeled_csv(path: Path, text_col: str, label_col: str,
     if label.nunique() < 2:
         sys.exit("Need rows of both classes. Check --fake-values / --real-values "
                  f"against the labels in '{label_col}': {sorted(raw.unique())[:10]}")
-    return pd.DataFrame({"title": df.loc[~unmapped, text_col], "label": label[~unmapped]})
+    return pd.DataFrame({"title": df.loc[~unmapped, text_col], "label": label[~unmapped], "source": path.name})
 
 
 def prepare(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Clean titles and remove rows that would cause leakage."""
     report = {"raw_rows": len(df)}
     df = df.copy()
-    df["clean"] = df["title"].map(clean_title)
+    # "text" is what the model learns from when a loader changes it (IFND);
+    # "title" stays readable for the misclassified examples.
+    text = df["text"].fillna(df["title"]) if "text" in df else df["title"]
+    df["clean"] = text.map(clean_title)
 
     empty = df["clean"] == ""
     report["dropped_empty"] = int(empty.sum())
@@ -123,6 +168,10 @@ def prepare(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     report["final_rows"] = len(df)
     report["class_counts"] = {k: int(v) for k, v in df["label"].value_counts().items()}
+    if "source" in df and df["source"].nunique() > 1:
+        report["source_counts"] = {
+            src: {k: int(v) for k, v in g["label"].value_counts().items()} for src, g in df.groupby("source")
+        }
     return df.reset_index(drop=True), report
 
 
@@ -197,6 +246,9 @@ def parse_args(argv=None):
     isot.add_argument("--fake", type=Path, default=ROOT / "data" / "Fake.csv")
     isot.add_argument("--real", type=Path, default=ROOT / "data" / "True.csv")
     isot.add_argument("--title-col", default="title", help="headline column in both files")
+    isot.add_argument("--ifnd", type=Path, default=None,
+                      help="Indian Fake News Dataset CSV to add (default: data/IFND.csv if it exists)")
+    isot.add_argument("--no-ifnd", action="store_true", help="train on ISOT only")
     single = parser.add_argument_group("single labelled CSV (instead of ISOT)")
     single.add_argument("--csv", type=Path, help="one CSV with a text and a label column")
     single.add_argument("--text-col", default="title")
@@ -230,6 +282,13 @@ def main(argv=None):
             "files": [str(args.fake), str(args.real)],
             "label_mapping": {"fake": [args.fake.name], "real": [args.real.name]},
         }
+        ifnd = None if args.no_ifnd else args.ifnd or (IFND_FILE if IFND_FILE.exists() else None)
+        if ifnd:
+            raw = pd.concat([raw, load_ifnd(ifnd)], ignore_index=True)
+            dataset["name"] = "ISOT + IFND (titles only)"
+            dataset["files"].append(str(ifnd))
+            dataset["label_mapping"]["fake"].append(f"{ifnd.name}: Label=Fake")
+            dataset["label_mapping"]["real"].append(f"{ifnd.name}: Label=TRUE")
     df, data_report = prepare(raw)
     for k, v in data_report.items():
         print(f"  {k}: {v}")
@@ -237,10 +296,11 @@ def main(argv=None):
         sys.exit("Each class needs at least 2 headlines after cleaning to split train/test.")
 
     # Split BEFORE fitting TF-IDF; the vectorizer is fit inside the pipeline
-    # on training data only.
-    X_train, X_test, y_train, y_test, title_train, title_test = train_test_split(
-        df["clean"], df["label"], df["title"],
-        test_size=TEST_SIZE, stratify=df["label"], random_state=SEED,
+    # on training data only. Stratify by label and dataset together, so each
+    # dataset keeps its real/fake ratio in the test set.
+    X_train, X_test, y_train, y_test, title_train, title_test, _, source_test = train_test_split(
+        df["clean"], df["label"], df["title"], df["source"],
+        test_size=TEST_SIZE, stratify=df["label"] + "/" + df["source"], random_state=SEED,
     )
     print(f"Train: {len(X_train)}  Test: {len(X_test)}")
 
@@ -256,6 +316,16 @@ def main(argv=None):
 
     best = fitted["Logistic Regression"]
     misclassified = misclassified_examples(best, preds["Logistic Regression"], X_test, y_test, title_test)
+
+    # A combined score can hide a weak dataset, so report each one separately.
+    by_source = {}
+    if source_test.nunique() > 1:
+        for src in sorted(source_test.unique()):
+            mask = (source_test == src).to_numpy()
+            by_source[src], _ = evaluate(best, X_test[mask], y_test[mask])
+            by_source[src]["test_rows"] = int(mask.sum())
+            m = by_source[src]
+            print(f"  {src} test headlines ({m['test_rows']}): accuracy={m['accuracy']} f1={m['f1']}")
 
     out.mkdir(parents=True, exist_ok=True)
     joblib.dump(best, out / "news_pipeline.joblib")
@@ -274,6 +344,7 @@ def main(argv=None):
         "label_order": LABEL_ORDER,
         "selected_model": "Logistic Regression",
         "models": results,
+        "by_source": by_source,
         "top_terms": top_terms(best),
         "misclassified_examples": misclassified,
     }

@@ -26,9 +26,12 @@ def render() -> None:
       prediction use the same function.</li>
     <li><strong>Features.</strong> TF-IDF over single words and two-word phrases seen in at least two
       training headlines.</li>
-    <li><strong>Classifier.</strong> Logistic regression, trained on 80% of the ISOT dataset after
-      removing duplicate headlines and headlines that appear in both classes. Multinomial Naive Bayes
-      is trained on the same split for comparison.</li>
+    <li><strong>Classifier.</strong> Logistic regression, trained on 80% of two datasets after
+      removing duplicate headlines and headlines that appear in both classes: ISOT (US news, 2016–17)
+      and IFND (Indian news, 2013–21). Most of IFND's fake headlines are fact-checkers' titles
+      (“Fact Check: No, this photo is not…”), so words such as “fact check”, “false” and “viral” are
+      removed from it first; otherwise the model would learn to spot fact-check articles. Multinomial
+      Naive Bayes is trained on the same split for comparison.</li>
     <li><strong>Uncertain zone.</strong> If P(fake) is between {lo:.0%} and {hi:.0%}, or none of the
       words were seen in training, the answer is <em>Uncertain</em> instead of a forced call.</li>
     <li><strong>Explanation.</strong> Each word's contribution is its TF-IDF value times the model's
@@ -78,8 +81,9 @@ def render() -> None:
 
   <h2>Limits worth knowing</h2>
   <ul>
-    <li><strong>Style is not truth.</strong> The model learned how 2016–17 Reuters headlines and
-      fake-news sites write. A sober fake or a sensational real story will fool it.</li>
+    <li><strong>Style is not truth.</strong> The model learned how Reuters and Indian newspapers
+      write headlines, and how fake-news sites and fact-checked Indian claims are worded. A sober fake
+      or a sensational real story will fool it.</li>
     <li><strong>Retrieval is the weak link.</strong> If the wrong article is found, the NLI step reasons
       correctly about the wrong text. The thresholds were tuned on 10 demo claims, so real accuracy is
       lower.</li>

@@ -46,7 +46,7 @@ TruthLens/
 ├── .streamlit/config.toml  # theme, 5 MB upload limit, no usage statistics
 ├── .env.example            # copy to .env and add your Fact Check API key
 ├── tests/                  # pytest (no dataset, internet or model downloads needed)
-├── data/                   # put Fake.csv and True.csv here (not included)
+├── data/                   # put Fake.csv, True.csv (and IFND.csv) here (not included)
 └── models/                 # created by train_model.py
 ```
 
@@ -79,7 +79,20 @@ Tools API" → create an API key). `.env` is git-ignored. Without a key the othe
 Download the **ISOT Fake News Dataset** (University of Victoria; also mirrored on Kaggle as
 "Fake and Real News Dataset") and place `Fake.csv` and `True.csv` in `data/`. Only the `title`
 column is used. Labels come from the file name: `Fake.csv` → fake, `True.csv` → real.
-The dataset is not included in this repo.
+
+**Indian context (optional, recommended).** Also download the **Indian Fake News Dataset (IFND)**
+(Kaggle: "IFND dataset", 56,714 Indian headlines from 2013–21) and save it as `data/IFND.csv`.
+`python train_model.py` then trains on both (`--no-ifnd` to skip it). The `Statement` column is used,
+with `Label` TRUE → real and Fake → fake. Two IFND problems are fixed while loading, because either
+would let the model score well for the wrong reason:
+- **Broken punctuation.** The file mixes three encodings, and the junk differs by class (`Ûª` only
+  in real rows, `â€™` only in fake rows). Junk between two letters becomes an apostrophe, any other
+  junk a space.
+- **Fact-check wording.** About 81% of the "fake" rows are fact-checkers' headlines
+  (*"Fact Check: No, this photo is not…"*), against 5% of real rows. Words such as "fact check",
+  "false", "viral", "hoax", "claim" and a leading "No," are removed from every IFND row.
+
+The datasets are not included in this repo.
 
 **Other datasets.** Any CSV with a text column and a label column works. Map its labels explicitly:
 ```
@@ -184,10 +197,17 @@ anthem, 5G coronavirus) are only refuted by published fact-checks, so they come 
 - **Style, not truth.** The strongest signals are writing style: Reuters headlines drop words like
   "the"/"is" and use "says"; the fake sites use more pronouns and emotional words. A sober fake or a
   sensational real headline will fool it.
-- **Source bias.** All "real" training items come from Reuters, so the model partly learns "Reuters
-  style". Reported metrics apply only to this dataset's held-out test split.
-- **Old, narrow data.** Mostly US politics/world news from 2016–2017. New names are unknown words
+- **Source bias.** All ISOT "real" items come from Reuters, and most IFND real items from a few
+  Indian papers (The Tribune, The Statesman, ThePrint), so the model partly learns their house style.
+  Reported metrics apply only to these datasets' held-out test splits.
+- **Fact-check style.** Even after cleaning, IFND's fake side is mostly fact-checkers' wording about a
+  claim, so words like "photo", "video", "old" and "did" lean fake.
+- **Old data.** US news from 2016–17 and Indian news from 2013–21. New names are unknown words
   (the app warns when few words are known).
+
+With IFND (87,239 headlines after cleaning), Logistic Regression scores 92.0% accuracy / 89.4% F1
+overall: 91.9% / 87.4% on Indian test headlines and 92.2% / 91.3% on US ones. Naive Bayes is level
+(92.2% / 89.5%); the app keeps Logistic Regression for its per-word explanations and probabilities.
 
 ### Privacy
 The style model and the NLI models run locally. With **Check evidence online** on, the claim (or its

@@ -78,13 +78,13 @@ def _input_panel(pipeline) -> None:
 
 
 def _aside() -> None:
-    ui.show("""
+    ui.show(f"""
 <aside class="tl-aside">
   <p class="tl-kicker">How to read the result</p>
   <ol>
     <li><div><h3>Writing style</h3>
-      <p>A TF-IDF + logistic regression model compares the wording with ~38,000 real and
-      fake headlines from 2016–17 and estimates which it resembles.</p></div></li>
+      <p>A TF-IDF + logistic regression model compares the wording with
+      {ui.esc(state.training_data_summary())} and estimates which it resembles.</p></div></li>
     <li><div><h3>Evidence check</h3>
       <p>Published fact-checks, Wikipedia and news are searched for the claim, and an NLI
       model reads the most relevant sentences to see whether they support or contradict it.</p></div></li>

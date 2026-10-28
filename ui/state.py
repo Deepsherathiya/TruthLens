@@ -19,6 +19,12 @@ from core.analyze import analyze
 from core.schema import FAKE
 from core.sources import NEWS
 
+# Training datasets, by the "source" name train_model.py gives them.
+DATASETS = {
+    "ISOT": ("US news (ISOT)", "2016–17"),
+    "IFND": ("Indian news (IFND)", "2013–21"),
+}
+
 # st.Page objects by name, filled in by app.py so pages can link to each other.
 PAGES: dict = {}
 
@@ -28,6 +34,8 @@ EXAMPLES = {
     "UK votes to leave EU": "UK votes to leave the European Union",
     "“DESTROYED on live TV”": "WATCH: Hillary Just DESTROYED This GOP Moron On Live TV",
     "“Caught lying again”": "BREAKING: Obama Caught Lying AGAIN, And It's Worse Than You Think",
+    "RBI holds repo rate": "RBI keeps repo rate unchanged at 6.5 per cent",
+    "“WhatsApp calls monitored”": "Government will monitor all WhatsApp calls and messages from tomorrow",
 }
 
 
@@ -62,6 +70,17 @@ def get_metrics() -> dict | None:
         return style_model.load_metrics()
     except (OSError, ValueError):
         return None
+
+
+def training_data_summary() -> str:
+    """e.g. "87,239 real and fake headlines (US news, 2016–17; Indian news, 2013–21)"."""
+    m = get_metrics()
+    if m is None:
+        return "real and fake headlines"
+    d = m["dataset"]
+    sources = list(d.get("source_counts") or (["ISOT"] if "ISOT" in d["name"] else []))
+    eras = "; ".join(f"{DATASETS[s][0].split(' (')[0]}, {DATASETS[s][1]}" for s in sources if s in DATASETS)
+    return f"{d['final_rows']:,} real and fake headlines" + (f" ({eras})" if eras else "")
 
 
 def factcheck_key() -> str | None:

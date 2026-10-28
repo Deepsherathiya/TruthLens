@@ -57,6 +57,16 @@ def render() -> None:
             st.dataframe(table.style.format("{:.2%}"), width="stretch")
         ui.show('<p class="tl-fine">Judge models on precision, recall and F1 together, not on accuracy alone.</p>')
 
+    by_source = m.get("by_source") or {}
+    if by_source:
+        # A combined score can hide a weak dataset.
+        ui.section("By dataset", f"{ui.esc(sel)} on each dataset's test headlines")
+        ui.stat_row([
+            (state.DATASETS.get(src, (src,))[0], ui.pct(res["accuracy"]),
+             f"accuracy · F1 {ui.pct(res['f1'])} · {res['test_rows']:,} headlines")
+            for src, res in by_source.items()
+        ])
+
     ui.section("Where the data came from")
     removed = d.get("dropped_empty", 0) + d.get("dropped_conflicting", 0) + d.get("dropped_duplicates", 0)
     classes = d.get("class_counts", {})
@@ -80,9 +90,10 @@ def render() -> None:
     with b:
         ui.show(ui.term_table([(w, abs(v)) for w, v in terms.get("real", [])[:15]], "tone-real",
                               caption="Pushes toward real", value_format="{:.2f}", header=("Term", "Strength")))
-    ui.show('<p class="tl-fine" style="margin-top:.6rem">These are statistical associations in this dataset '
-            '(mostly writing style: Reuters headlines use "says" and drop small words), not proof that a '
-            'word makes a story true or false.</p>')
+    ui.show('<p class="tl-fine" style="margin-top:.6rem">These are statistical associations in the training data '
+            '(mostly writing style: news agencies and newspapers use "says", "probe" and "SC" and drop small '
+            'words; fact-checked Indian claims are often about a "photo" or "video"), not proof that a word '
+            'makes a story true or false.</p>')
 
     ui.section("Headlines the model got wrong", "from the test set")
     wrong = pd.DataFrame(m.get("misclassified_examples", []))

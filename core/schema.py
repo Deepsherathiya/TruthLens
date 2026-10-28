@@ -54,7 +54,7 @@ MODEL_LABEL_TO_VERDICT = {"fake": FAKE, "real": REAL}
 
 DISCLAIMER = (
     "This is a machine-learning prediction based on writing patterns learned "
-    "from a 2016-2017 news dataset. It is not fact verification."
+    "from older news headlines (US 2016-17, Indian 2013-21). It is not fact verification."
 )
 
 EVIDENCE_DISCLAIMER = (
