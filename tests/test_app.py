@@ -31,6 +31,18 @@ def test_analyze_history_and_clear(model_dir):
     assert at.session_state.history == []
 
 
+def test_empty_input_warning_goes_away_on_next_analyze(model_dir):
+    # Regression: the warning was drawn before the next click cleared it, so it
+    # stayed on screen next to the new report.
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    at = _run_headline(at, "   ")
+    assert at.session_state.input_error and at.session_state.history == []
+    at = _run_headline(at, "Senate says trade talks with China will continue")
+    assert not at.exception
+    assert at.session_state.input_error is None and len(at.session_state.history) == 1
+    assert not any("Please enter" in h.proto.body for h in at.get("html"))
+
+
 def test_app_works_without_a_model(tmp_path, monkeypatch):
     monkeypatch.setenv("TRUTHLENS_MODEL_DIR", str(tmp_path))
     at = AppTest.from_file(APP, default_timeout=60).run()

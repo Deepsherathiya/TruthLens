@@ -108,9 +108,10 @@ the two to justify our choice.
 
 ### How we tested it
 
-We split the data: **80% to train** and **20% to test** on headlines the model has never seen.
 Before splitting, we removed duplicate headlines so the same headline couldn't appear in both parts.
-We measure **accuracy, precision, recall and F1 score**.
+This left **38,716 headlines** (20,816 real, 17,900 fake) out of 44,898. We split them: **80% to
+train** (30,972) and **20% to test** (7,744 headlines the model has never seen). We measure
+**accuracy, precision, recall and F1 score**.
 
 ---
 
@@ -193,13 +194,17 @@ calmly, but the evidence check can.
 
 ## 7. Results
 
-**Writing-style classifier** (20% test set; fill in from the app's *Model performance* page after
-training):
+**Writing-style classifier** (7,744 test headlines; "fake" is the positive class):
 
 | Model | Accuracy | Precision | Recall | F1 |
 |---|---|---|---|---|
-| Logistic Regression | ___ | ___ | ___ | ___ |
-| Naive Bayes | ___ | ___ | ___ | ___ |
+| Logistic Regression | 94.07% | 94.96% | 92.07% | 93.49% |
+| Naive Bayes | 93.88% | 93.80% | 92.91% | 93.35% |
+
+Logistic Regression is slightly better on accuracy, precision and F1, and it gives clearer
+per-word explanations, so the app uses it. The words it relies on most show it learned **style**:
+"says", "us", "eu" and "senate" push toward real (Reuters' headline habits), while "hillary", "just",
+"you" and "this" push toward fake.
 
 **Evidence check** (10 test claims):
 - 10/10 correct with the Fact Check API key. These claims were also used to tune the settings, so

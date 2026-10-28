@@ -28,6 +28,12 @@ def _use_demo_claim():
         st.session_state.input_error = None
 
 
+def _validate():
+    # A callback runs before the page is drawn, so the warning above the button
+    # always matches this click (not the previous one).
+    st.session_state.input_error = validate_input(st.session_state.headline)
+
+
 def _clear():
     st.session_state.headline = ""
     st.session_state.last = None
@@ -47,7 +53,8 @@ def _input_panel(pipeline) -> None:
         ui.note(ui.esc(st.session_state.input_error), "tone-unc", "alert")
 
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
-        run = st.button("Analyze", type="primary", icon=":material/arrow_forward:", icon_position="right")
+        run = st.button("Analyze", type="primary", icon=":material/arrow_forward:", icon_position="right",
+                        on_click=_validate)
         st.button("Clear", type="tertiary", on_click=_clear)
         st.space("stretch")
         st.toggle("Check evidence online", key="online",
@@ -58,12 +65,8 @@ def _input_panel(pipeline) -> None:
     st.selectbox("…or a demo claim", [NO_PICK] + [c for c, _ in DEMO_CLAIMS], key="demo_claim",
                  on_change=_use_demo_claim)
 
-    if run:
+    if run and not st.session_state.input_error:
         text = st.session_state.headline
-        error = validate_input(text)
-        st.session_state.input_error = error
-        if error:
-            st.rerun()
         style = state.run_style(text, pipeline)
         sources = None
         if st.session_state.online:
