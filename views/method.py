@@ -40,7 +40,10 @@ def render() -> None:
     <li><strong>Search.</strong> Published fact-checks (Google Fact Check Tools, if an API key is set),
       the top Wikipedia articles, Wikipedia's daily <em>Current events</em> archive (each item cites the
       outlet that reported it, such as Reuters or the BBC) and GDELT (worldwide news from about the
-      last three months). Simple yes/no questions are first rewritten as statements.</li>
+      last three months). Simple yes/no questions are first rewritten as statements. For an article
+      about a person, Wikipedia's categories add one sentence such as “Narendra Modi is alive.”
+      (<em>Living people</em>) or “Ratan Tata died in 2024.” (<em>2024 deaths</em>), so death hoaxes
+      can be refuted even though no article says “he did not die”.</li>
     <li><strong>Fact-checks.</strong> A fact-check only counts if it is about the <em>same</em> claim:
       similar meaning and, in the logically valid direction, one statement implies the other
       (rated False: our claim must imply the checked claim; rated True: the reverse).</li>

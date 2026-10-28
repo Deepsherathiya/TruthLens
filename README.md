@@ -109,7 +109,10 @@ If the app is already open when you train, just reload the page: it picks up the
    This drops look-alikes such as *"Video shows Chandrayaan-3 landing"* (False: the video was fake),
    which says nothing about whether Chandrayaan-3 landed.
 2. **Candidate sentences** (no keys needed):
-   - **Wikipedia**: top 3 articles for the claim, split into sentences.
+   - **Wikipedia**: top 3 articles for the claim, split into sentences. For a person, one more
+     sentence comes from the article's categories: *"Narendra Modi is alive."* ("Living people") or
+     *"Ratan Tata died in 2024."* ("2024 deaths"). No article says "Modi did not commit suicide", so
+     without it death hoaxes could only get *Not enough evidence*.
    - **News archive**: Wikipedia's daily *Current events* pages, back to the early 2000s. Each item
      cites the outlet that reported it (Reuters, BBC, …), which is shown as the publisher.
    - **Recent news**: GDELT, worldwide news from about the last 3 months (often busy; optional).

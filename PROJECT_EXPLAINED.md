@@ -126,6 +126,13 @@ The claim is searched in:
 - **Wikipedia:** the top matching articles.
 - **News archives:** Wikipedia's daily news summaries and the GDELT news database.
 
+**Turning a fact into a sentence.** Some fake news is about something that never happened, for example
+*"Narendra Modi committed suicide"*. No article will ever say "Modi did not commit suicide", so there
+is nothing to contradict the claim directly. But Wikipedia files every biography under either
+*"Living people"* or a category like *"2024 deaths"*. For a person, the app turns this into one plain
+sentence, *"Narendra Modi is alive."*, and lets the NLI model judge it like any other evidence. The
+model sees that "is alive" contradicts "committed suicide", so the claim is **Refuted**.
+
 ### Step 2: Find the most relevant sentences (sentence embeddings)
 
 The search returns hundreds of sentences. To find the ones closest in **meaning** to the claim, we
@@ -228,3 +235,5 @@ training):
 | Natural Language Inference (DeBERTa) | Decides whether evidence supports or contradicts the claim |
 
 **Tech used:** Python, scikit-learn, Hugging Face Transformers, Sentence-Transformers, Streamlit.
+
+

@@ -5,7 +5,7 @@ The live pipeline is checked with:  python check_demo_claims.py
 
 import pytest
 
-from core import nli_evidence
+from core import nli_evidence, retrieval
 from core.nli_evidence import decide, keyword_queries, rating_to_stance
 from core.nlp_models import normalize
 from core.preprocessing import question_to_statement
@@ -110,3 +110,26 @@ def test_sentence_about_the_claim_is_on_topic(monkeypatch):
     items = nli_evidence.sentence_evidence(
         "The Great Wall of China is visible from the Moon with the naked eye", [{"sentence": sentence}])
     assert items[0]["on_topic"] and decide([], items)[0] == REFUTED
+
+
+@pytest.mark.parametrize("title, categories, fact", [
+    ("Narendra Modi", ("Category:Living people", "Category:Prime ministers of India"),
+     ("Narendra Modi is alive.", "Living people")),
+    ("Ratan Tata", ("Category:1937 births", "Category:2024 deaths"), ("Ratan Tata died in 2024.", "2024 deaths")),
+    ("Michael Jordan (footballer)", ("Category:Living people",),
+     ("Michael Jordan is alive.", "Living people")),
+    ("Great Wall of China", ("Category:Walls in China",), None),
+])
+def test_life_fact_from_categories(title, categories, fact):
+    assert retrieval.life_fact(title, categories) == fact
+
+
+def test_wikipedia_adds_life_fact_for_people(monkeypatch):
+    monkeypatch.setattr(retrieval, "_wiki_search", lambda q: ("Narendra Modi",))
+    monkeypatch.setattr(retrieval, "_wiki_categories",
+                        lambda titles: (("Narendra Modi", ("Category:Living people",)),))
+    monkeypatch.setattr(retrieval, "_wiki_text", lambda t: "Narendra Modi is an Indian politician and statesman.")
+    sentences, error = retrieval.search_wikipedia("narendra modi suicides")
+    assert error is None
+    assert sentences[0]["sentence"] == "Narendra Modi is alive."
+    assert "Living people" in sentences[0]["title"]
