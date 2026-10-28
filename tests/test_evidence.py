@@ -64,6 +64,7 @@ def test_most_relevant_confident_sentence_decides():
     items = [wiki("refutes", 0.99, 0.70), wiki("supports", 0.95, 0.80), wiki("neutral", 0.9, 0.85)]
     verdict, conf, note = decide([], items)
     assert verdict == SUPPORTED and conf == 0.95 and note is None
+    assert [bool(e.get("deciding")) for e in items] == [False, True, False]
 
 
 def test_close_conflict_adds_warning():

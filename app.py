@@ -57,6 +57,19 @@ def badge(verdict: str) -> str:
 
 STANCE_ICON = {"supports": "🟢 supports", "refutes": "🔴 refutes", "neutral": "⚪ neutral"}
 
+
+def evidence_card(e: dict):
+    with st.container(border=True):
+        if e.get("deciding"):
+            st.markdown("**⭐ Deciding evidence**")
+        # Fact-checks have no relevance score; their score is the claim-match strength.
+        if "similarity" in e:
+            detail = f"NLI {e['score']:.0%} · relevance {e['similarity']:.2f}"
+        else:
+            detail = f"claim match {e['score']:.0%}"
+        st.markdown(f"{STANCE_ICON[e['stance']]} · {detail} · [{e['source']}]({e['url']})")
+        st.write(e["sentence"])
+
 # ---------------- Evidence Check (V2) ----------------
 with tab_evidence:
     st.write("Checks a claim against **published fact-checks** (Google Fact Check API) and "
@@ -81,11 +94,23 @@ with tab_evidence:
             for w in r["warnings"]:
                 st.info(w)
 
-            st.write("**Evidence**" if r["evidence"] else "No relevant evidence found.")
-            for e in r["evidence"]:
-                with st.container(border=True):
-                    st.markdown(f"{STANCE_ICON[e['stance']]} · {e['score']:.0%} · [{e['source']}]({e['url']})")
-                    st.write(e["sentence"])
+            # Sentences that point against the verdict but were less relevant than the
+            # deciding one go in a collapsed section, so they don't look like the main evidence.
+            winning = {SUPPORTED: "supports", REFUTED: "refutes"}.get(r["verdict"])
+            opposing = [e for e in r["evidence"]
+                        if winning and e["stance"] not in (winning, "neutral") and not e.get("deciding")]
+            main = [e for e in r["evidence"] if e not in opposing]
+
+            st.write("**Evidence** (most relevant first)" if r["evidence"] else "No relevant evidence found.")
+            for e in main:
+                evidence_card(e)
+            if opposing:
+                with st.expander(f"Other related sentences pointing the other way ({len(opposing)}, less relevant)"):
+                    st.caption("The NLI model often misreads sentences about a different time or topic as "
+                               "contradictions (e.g. a past job vs a current one). These were less relevant "
+                               "to the claim than the deciding evidence, so they did not decide the verdict.")
+                    for e in opposing:
+                        evidence_card(e)
 
             # Side-by-side with the V1 style model, for the demo comparison.
             v1 = analyze(claim, mode="style", pipeline=pipeline)

@@ -13,7 +13,9 @@ without changing the UI code that renders V1.
   "probabilities": {"Likely Real": p, "Likely Fake": p}   # V1 only
   "word_contributions": [{"term": str, "score": float}]    # +score pushes to Fake,
                                                             # -score pushes to Real
-  "evidence": [{"sentence", "source", "url", "stance", "score"}]  # V2 only
+  "evidence": [{"sentence", "source", "url", "stance", "score",     # V2 only
+                "similarity" (Wikipedia only: relevance to the claim),
+                "deciding" (True on the item that decided the verdict)}]
   "warnings": [str],
   "error": str | None,
 }

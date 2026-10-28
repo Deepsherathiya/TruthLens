@@ -148,13 +148,17 @@ def wikipedia_evidence(claim: str, warnings: list) -> list[dict]:
 
 
 def decide(fc_items: list[dict], wiki_items: list[dict]) -> tuple[str, float, str | None]:
-    """Return (verdict, confidence, optional warning)."""
+    """
+    Return (verdict, confidence, optional warning).
+    The evidence item that decided gets "deciding": True, so the UI can show it first.
+    """
     fc_sup = [e for e in fc_items if e["stance"] == "supports"]
     fc_ref = [e for e in fc_items if e["stance"] == "refutes"]
-    if len(fc_ref) > len(fc_sup):
-        return REFUTED, max(e["score"] for e in fc_ref), None
-    if len(fc_sup) > len(fc_ref):
-        return SUPPORTED, max(e["score"] for e in fc_sup), None
+    if len(fc_ref) != len(fc_sup):
+        verdict, winners = (REFUTED, fc_ref) if len(fc_ref) > len(fc_sup) else (SUPPORTED, fc_sup)
+        best = max(winners, key=lambda e: e["score"])
+        best["deciding"] = True
+        return verdict, best["score"], None
     # No matching fact-checks (or they disagree): use Wikipedia.
 
     # Most relevant first; only sentences relevant enough may decide.
@@ -163,6 +167,7 @@ def decide(fc_items: list[dict], wiki_items: list[dict]) -> tuple[str, float, st
     if not decisive:
         return NOT_ENOUGH, 0.0, None
     top = decisive[0]
+    top["deciding"] = True
     verdict = SUPPORTED if top["stance"] == "supports" else REFUTED
     note = None
     if any(e["stance"] != top["stance"] and top["similarity"] - e["similarity"] < CONFLICT_WINDOW
@@ -183,7 +188,11 @@ def check_claim(claim: str, result: dict) -> dict:
     result["verdict"] = verdict
     result["confidence"] = round(confidence, 4)
 
-    # Show decisive evidence first, then the most relevant neutral sentences.
-    wiki_items.sort(key=lambda e: (e["stance"] == "neutral", -e["score"]))
-    result["evidence"] = fc_items + wiki_items[: SHOW_EVIDENCE]
+    # Show evidence in the order it was weighed: the deciding item first, then
+    # fact-checks, then Wikipedia sentences by relevance (NOT by NLI confidence,
+    # which made barely-relevant "contradictions" look like the main evidence).
+    wiki_items.sort(key=lambda e: -e["similarity"])
+    evidence = fc_items + wiki_items[:SHOW_EVIDENCE]
+    evidence.sort(key=lambda e: not e.get("deciding", False))  # stable sort keeps the rest in order
+    result["evidence"] = evidence
     return result
