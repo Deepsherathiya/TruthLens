@@ -31,7 +31,9 @@ def render() -> None:
       and IFND (Indian news, 2013–21). Most of IFND's fake headlines are fact-checkers' titles
       (“Fact Check: No, this photo is not…”), so words such as “fact check”, “false” and “viral” are
       removed from it first; otherwise the model would learn to spot fact-check articles. Multinomial
-      Naive Bayes is trained on the same split for comparison.</li>
+      Naive Bayes is trained on the same split for comparison. Each model's main setting (regularisation
+      strength C, smoothing alpha) is chosen on a validation slice of the training data; the test set
+      is used once, at the end.</li>
     <li><strong>Uncertain zone.</strong> If P(fake) is between {lo:.0%} and {hi:.0%}, none of the
       words were seen in training, or the text has fewer than {MIN_WORDS} words (“modi died” has no
       writing style to judge), the answer is <em>Uncertain</em> instead of a forced call.</li>
@@ -64,7 +66,9 @@ def render() -> None:
       The deciding sentence must also contain at least {nli_evidence.KEY_TERMS:.0%} of the claim's
       key words and {nli_evidence.KEY_NAMES:.0%} of its names and numbers, so a sentence about
       someone else (“Minister Arvind Sawant resigned”) can't decide “Narendra Modi resigned”.
-      Anything else is <em>Not enough evidence</em>.</li>
+      A <em>refuting</em> sentence must also share a word besides the names, because contradiction is
+      the NLI model's weak spot: “Modi is often accused of having narcissistic traits” mentions Modi
+      but says nothing about “modi is a dictator”. Anything else is <em>Not enough evidence</em>.</li>
   </ol>
 
   <h3>Fallback: word matching</h3>

@@ -27,17 +27,18 @@ import joblib
 import numpy as np
 import pandas as pd
 import sklearn
+from sklearn.base import clone
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
-    accuracy_score, confusion_matrix, precision_recall_fscore_support,
+    accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support,
 )
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
 
 from core.preprocessing import clean_title
-from core.style_model import model_dir
+from core.style_model import model_dir, word_count
 
 ROOT = Path(__file__).resolve().parent
 SEED = 42
@@ -46,6 +47,16 @@ POSITIVE = "fake"            # precision/recall are reported for the "fake" clas
 LABEL_ORDER = ["real", "fake"]  # row/column order of the confusion matrix
 MAX_MISCLASSIFIED = 25
 IFND_FILE = ROOT / "data" / "IFND.csv"
+# Settings are picked on a validation slice of the TRAINING data; the test set
+# is used once, at the end. C: weaker regularisation (higher C) lets the model
+# trust more of its many word features. alpha: Naive Bayes smoothing.
+VALIDATION_SIZE = 0.15
+MIN_ROWS_TO_TUNE = 200
+GRIDS = {
+    "Logistic Regression": ("clf__C", [1, 2, 4, 8, 16]),
+    "Multinomial Naive Bayes": ("clf__alpha", [0.1, 0.3, 1.0]),
+}
+LENGTH_BUCKETS = [(1, 3), (4, 5), (6, 8), (9, None)]  # words, as the model counts them
 
 # IFND mixes three text encodings, so curly quotes became junk such as
 # "Modiâ\x80\x99s" (only in fake rows) and "yearÛªs" (only in real rows).
@@ -194,6 +205,35 @@ def build_models() -> dict[str, Pipeline]:
     }
 
 
+def tune(name: str, model: Pipeline, X_train, y_train) -> dict:
+    """Pick the setting with the best validation F1. Returns {} when there is too little data."""
+    if name not in GRIDS or len(X_train) < MIN_ROWS_TO_TUNE:
+        return {}
+    param, values = GRIDS[name]
+    X_fit, X_val, y_fit, y_val = train_test_split(
+        X_train, y_train, test_size=VALIDATION_SIZE, stratify=y_train, random_state=SEED)
+    scores = {}
+    for v in values:
+        fitted = clone(model).set_params(**{param: v}).fit(X_fit, y_fit)
+        scores[v] = round(float(f1_score(y_val, fitted.predict(X_val), pos_label=POSITIVE)), 4)
+    best = max(values, key=lambda v: scores[v])
+    print(f"  validation F1 by {param.split('__')[1]}: {scores} -> {best}")
+    return {"param": param.split("__")[1], "chosen": best, "validation_f1": scores}
+
+
+def accuracy_by_length(X_test, y_test, pred) -> dict:
+    """Short headlines carry little style; report how accuracy changes with length."""
+    n = X_test.map(word_count).to_numpy()
+    out = {}
+    for lo, hi in LENGTH_BUCKETS:
+        mask = (n >= lo) & (n <= (hi or n.max()))
+        if mask.any():
+            label = f"{lo}–{hi} words" if hi else f"{lo}+ words"
+            out[label] = {"test_rows": int(mask.sum()),
+                          "accuracy": round(float(accuracy_score(y_test.to_numpy()[mask], pred[mask])), 4)}
+    return out
+
+
 def evaluate(model: Pipeline, X_test, y_test) -> tuple[dict, np.ndarray]:
     pred = model.predict(X_test)
     p, r, f1, _ = precision_recall_fscore_support(
@@ -304,9 +344,12 @@ def main(argv=None):
     )
     print(f"Train: {len(X_train)}  Test: {len(X_test)}")
 
-    results, fitted, preds = {}, {}, {}
+    results, fitted, preds, tuning = {}, {}, {}, {}
     for name, model in build_models().items():
         print(f"Training {name}...")
+        tuning[name] = tune(name, model, X_train, y_train)
+        if tuning[name]:
+            model.set_params(**{GRIDS[name][0]: tuning[name]["chosen"]})
         model.fit(X_train, y_train)
         results[name], preds[name] = evaluate(model, X_test, y_test)
         fitted[name] = model
@@ -344,7 +387,9 @@ def main(argv=None):
         "label_order": LABEL_ORDER,
         "selected_model": "Logistic Regression",
         "models": results,
+        "tuning": tuning,
         "by_source": by_source,
+        "by_length": accuracy_by_length(X_test, y_test, preds["Logistic Regression"]),
         "top_terms": top_terms(best),
         "misclassified_examples": misclassified,
     }

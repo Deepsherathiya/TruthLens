@@ -184,7 +184,7 @@ def search_wikipedia(claim: str) -> tuple[list[dict], str | None]:
             if fact:
                 # Shown with the category it comes from, so it isn't mistaken for a quote.
                 out.append({"sentence": fact[0], "title": f"{title} (Wikipedia category: {fact[1]})",
-                            "url": url})
+                            "url": url, "life_fact": True})
             for s in split_sentences(_wiki_text(title)):
                 out.append({"sentence": s, "title": title, "url": url})
         return out, None

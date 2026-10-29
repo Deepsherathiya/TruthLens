@@ -3,6 +3,7 @@
 import pandas as pd
 import streamlit as st
 
+from core.style_model import MIN_WORDS
 from ui import charts, components as ui, state, theme
 
 METRIC_NAMES = {"accuracy": "Accuracy", "precision": "Precision", "recall": "Recall", "f1": "F1"}
@@ -66,6 +67,22 @@ def render() -> None:
              f"accuracy · F1 {ui.pct(res['f1'])} · {res['test_rows']:,} headlines")
             for src, res in by_source.items()
         ])
+
+    by_length = m.get("by_length") or {}
+    if by_length:
+        # Short text carries little style, which is why the app says Uncertain below MIN_WORDS.
+        ui.section("By headline length", "words as the model counts them (one-letter words skipped)")
+        ui.stat_row([(label, ui.pct(res["accuracy"]), f"accuracy · {res['test_rows']:,} headlines")
+                     for label, res in by_length.items()])
+        ui.show(f'<p class="tl-fine">Below {MIN_WORDS} words the app answers <em>Uncertain</em> instead '
+                'of guessing: very short text has almost no writing style to judge.</p>')
+
+    tuned = (m.get("tuning") or {}).get(sel)
+    if tuned:
+        ui.show(f'<p class="tl-fine">{ui.esc(sel)} setting {ui.esc(tuned["param"])} = '
+                f'{ui.esc(str(tuned["chosen"]))} was chosen on a validation slice of the training data '
+                f'(validation F1 by value: {ui.esc(", ".join(f"{k}: {v:.1%}" for k, v in tuned["validation_f1"].items()))}). '
+                'The test set was used only once, for the scores above.</p>')
 
     ui.section("Where the data came from")
     removed = d.get("dropped_empty", 0) + d.get("dropped_conflicting", 0) + d.get("dropped_duplicates", 0)

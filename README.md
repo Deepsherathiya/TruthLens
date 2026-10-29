@@ -140,7 +140,10 @@ If the app is already open when you train, just reload the page: it picks up the
    (e.g. *"Chandrayaan-3 was launched on 14 July"* vs *"... landed"*). The deciding sentence must
    also be **on topic**: it must contain ≥ 50% of the claim's key words and ≥ 50% of its names and
    numbers. Without this, *"Minister Arvind Sawant resigned from the cabinet"* "supported"
-   *"Narendra Modi resigned"*.
+   *"Narendra Modi resigned"*. A **refuting** sentence must also share a key word besides the names,
+   because contradiction is the NLI model's weak spot: *"Modi is often accused of having narcissistic
+   traits"* (97% contradiction) was refuting *"modi is a dictator"*. Supporting sentences don't need
+   this, so paraphrases still count (*"two wind-related fatalities"* supports *"killed two people"*).
    If an almost equally relevant sentence disagrees, the app shows a warning.
 
 Simple yes/no questions are rewritten as statements first ("Is the Earth flat?" → "the Earth is flat").
@@ -209,9 +212,12 @@ anthem, 5G coronavirus) are only refuted by published fact-checks, so they come 
 - **Old data.** US news from 2016–17 and Indian news from 2013–21. New names are unknown words
   (the app warns when few words are known).
 
-With IFND (87,239 headlines after cleaning), Logistic Regression scores 92.0% accuracy / 89.4% F1
-overall: 91.9% / 87.4% on Indian test headlines and 92.2% / 91.3% on US ones. Naive Bayes is level
-(92.2% / 89.5%); the app keeps Logistic Regression for its per-word explanations and probabilities.
+With IFND (87,239 headlines after cleaning), Logistic Regression scores 93.3% accuracy / 91.2% F1
+overall: 93.1% / 89.5% on Indian test headlines and 93.5% / 92.8% on US ones. Naive Bayes scores
+92.6% / 90.5%. Each model's main setting is chosen on a validation slice of the training data
+(Logistic Regression C = 8, Naive Bayes alpha = 0.1); the test set is used once. Accuracy drops on
+very short text (54.5% on the 11 test headlines of 1–3 words, 88.4% at 4–5 words), so text with
+fewer than 4 words gets *Uncertain*.
 
 ### Privacy
 The style model and the NLI models run locally. With **Check evidence online** on, the claim (or its

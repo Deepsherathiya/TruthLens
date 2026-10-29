@@ -192,7 +192,10 @@ So the fast model shortlists and the accurate model judges.
    **Supported** or **Refuted**. That sentence must also contain most of the claim's key words,
    including the names. Without this rule, *"Minister Arvind Sawant resigned from the cabinet"*
    was wrongly taken as proof that *"Narendra Modi resigned"*, because the NLI model only noticed
-   that both sentences were about resigning.
+   that both sentences were about resigning. A sentence that **refutes** must also share a word about
+   what the claim says, not just the name: *"Modi is often accused of having narcissistic traits"*
+   was wrongly read as refuting *"modi is a dictator"*. (Small NLI models often call a sentence a
+   "contradiction" when it is simply about something else.)
 3. If nothing clear is found, the result is **Not enough evidence**. This does not mean the claim is
    false, only that no source settled it.
 
@@ -221,19 +224,38 @@ calmly, but the evidence check can.
 
 | Model | Accuracy | Precision | Recall | F1 |
 |---|---|---|---|---|
-| Logistic Regression | 92.00% | 92.41% | 86.60% | 89.41% |
-| Naive Bayes | 92.15% | 93.25% | 86.10% | 89.53% |
+| Logistic Regression | 93.28% | 92.75% | 89.77% | 91.24% |
+| Naive Bayes | 92.64% | 90.84% | 90.21% | 90.52% |
 
 | Logistic Regression, by dataset | Test headlines | Accuracy | F1 |
 |---|---|---|---|
-| Indian news (IFND) | 9,705 | 91.87% | 87.36% |
-| US news (ISOT) | 7,743 | 92.17% | 91.26% |
+| Indian news (IFND) | 9,705 | 93.11% | 89.49% |
+| US news (ISOT) | 7,743 | 93.49% | 92.82% |
 
-The two models score almost the same. We use Logistic Regression because it gives a clear weight for
-every word (so the app can explain each prediction) and well-behaved probabilities (needed for the
-"Uncertain" zone). Trained on US news alone, the model scored 94.07% on US headlines; adding Indian
-news costs about 2 points there but lets the model read Indian headlines. On 16 new Indian headlines
-we wrote ourselves, it recognised 83–100% of the words instead of 50–92%.
+| Logistic Regression, by headline length | Test headlines | Accuracy |
+|---|---|---|
+| 1–3 words | 11 | 54.55% |
+| 4–5 words | 173 | 88.44% |
+| 6–8 words | 2,331 | 92.15% |
+| 9 or more words | 14,933 | 93.54% |
+
+**Tuning.** Each model has one main setting: how strongly Logistic Regression is kept simple
+(regularisation strength C) and how much Naive Bayes smooths word counts (alpha). We tried a few
+values on a **validation** slice (15% of the training data) and kept the best: C = 8 and alpha = 0.1.
+The test set was used only once, at the end, so the scores above are honest. This raised Logistic
+Regression from 92.0% to 93.3% accuracy and from 89.4% to 91.2% F1.
+
+Logistic Regression is better on accuracy and F1, and it gives a clear weight for every word (so the
+app can explain each prediction), so the app uses it. Trained and tuned on US news alone, the model
+scored 94.9% on US headlines; adding Indian news costs about 1.5 points there but lets the model read
+Indian headlines. On 16 new Indian headlines we wrote ourselves, it recognised 83–100% of the words
+instead of 50–92%.
+
+**Short text.** Accuracy falls sharply below 4 words, because a two- or three-word phrase has almost
+no writing style. So for text that short the app says **Uncertain**. For example, without this rule
+the model would call *"Hitler was a dictator"* "Likely Fake" (92%): US fake-news sites used the words
+"Hitler" and "dictator" a lot, and real headlines rarely use "was". The style model cannot know facts;
+the evidence check is the right tool there, and it does mark that claim **Supported**.
 
 The words it relies on most show it learned **style**: "says", "sc" (Supreme Court), "probe",
 "centre" and "court" push toward real (newspaper habits), while "video", "photo", "old", "image" and

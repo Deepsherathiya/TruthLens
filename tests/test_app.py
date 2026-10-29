@@ -8,6 +8,7 @@ from pathlib import Path
 import joblib
 from streamlit.testing.v1 import AppTest
 
+from core.schema import FAKE, REAL, UNCERTAIN
 from core.sources import NEWS
 from ui import components, state
 
@@ -68,3 +69,12 @@ def test_html_from_sources_is_escaped():
     assert "<script>" not in html and "<img" not in html and "<b>x</b>" not in html
     assert "javascript:" not in html                     # unsafe link not rendered
     assert "<mark>Senate</mark>" in html
+
+
+def test_rule_based_uncertain_shows_no_probabilities():
+    # Regression: "Hitler was a dictator" (too short) showed "Uncertain" over a 99% fake needle.
+    r = {"verdict": UNCERTAIN, "probabilities": {FAKE: 0.99, REAL: 0.01}, "stats": {"known_word_ratio": 1.0}}
+    html = components.style_card(r, model_ready=True)
+    assert "P(fake)" not in html and "tl-meter" not in html
+    r["probabilities"] = {FAKE: 0.52, REAL: 0.48}  # a real 50/50 keeps the meter
+    assert "tl-meter" in components.style_card(r, model_ready=True)

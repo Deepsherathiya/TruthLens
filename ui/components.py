@@ -165,6 +165,16 @@ def style_card(r: dict | None, model_ready: bool) -> str:
     head, tone = _verdict_head("Writing-style model", r["verdict"])
     probs = r["probabilities"]
     known = r["stats"].get("known_word_ratio")
+    lo, hi = UNCERTAIN_BAND
+    if r["verdict"] == UNCERTAIN and not lo <= probs[FAKE] <= hi:
+        # Uncertain by rule (too short, no known words): a 99% needle under
+        # "Uncertain" would contradict the verdict, so show no probabilities.
+        return f"""
+<section class="tl-card {tone}">
+  {head}
+  <p class="tl-dek">The model did not judge this text; the note below says why.</p>
+  <dl class="tl-figs"><div class="tl-fig"><dt>Words known</dt><dd>{pct(known, 0)}</dd></div></dl>
+</section>"""
     return f"""
 <section class="tl-card {tone}">
   {head}

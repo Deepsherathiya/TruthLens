@@ -7,6 +7,7 @@ Run:  pytest
 import json
 import re
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -222,3 +223,27 @@ def test_training_with_ifnd_reports_each_dataset(tmp_path):
     assert metrics["dataset"]["name"] == "ISOT + IFND (titles only)"
     assert set(metrics["by_source"]) == {"ISOT", "IFND"}
     assert metrics["dataset"]["source_counts"]["IFND"] == {"real": 10, "fake": 10}
+
+
+# ---------------------------------------------------------------- tuning and length breakdown
+
+def test_tuning_picks_from_the_grid_on_validation_data():
+    from tests.conftest import FIXTURE
+    from train_model import GRIDS, build_models, tune
+    # Enough distinct rows to hold out a validation slice.
+    X = pd.Series([f"{t.lower()} {i}" for i in range(20) for t in FIXTURE["title"]])
+    y = pd.Series([lab for _ in range(20) for lab in FIXTURE["label"]])
+    model = build_models()["Logistic Regression"]
+    result = tune("Logistic Regression", model, X, y)
+    assert result["param"] == "C" and result["chosen"] in GRIDS["Logistic Regression"][1]
+    assert set(result["validation_f1"]) == set(GRIDS["Logistic Regression"][1])
+    assert tune("Logistic Regression", model, X[:10], y[:10]) == {}  # too little data: keep defaults
+
+
+def test_accuracy_by_length_buckets():
+    from train_model import accuracy_by_length
+    X = pd.Series(["senate talks", "senate passes the tax bill", "eu and china hold trade talks on steel"])
+    y = pd.Series(["real", "real", "real"])
+    out = accuracy_by_length(X, y, np.array(["fake", "real", "real"]))
+    assert out["1–3 words"] == {"test_rows": 1, "accuracy": 0.0}
+    assert out["4–5 words"]["accuracy"] == 1.0 and out["6–8 words"]["test_rows"] == 1

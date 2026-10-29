@@ -26,7 +26,13 @@ Why "on topic": similarity alone let "Minister Arvind Sawant resigned from the
 cabinet" (from the article "Second Modi ministry") decide "Narendra Modi
 resigned", because the NLI model reads any resignation as support. A sentence
 may only decide if it contains at least half of the claim's key words,
-including at least half of its names and numbers.
+including at least half of its names and numbers. A REFUTING sentence must
+also share a key word besides the names: "Modi is often accused of having
+narcissistic traits" was read as refuting "modi is a dictator", though it only
+shares "Modi". Supporting sentences don't need this, so paraphrases still work
+("two wind-related fatalities" supports "killed two people"). The exception is
+a Wikipedia life fact ("Narendra Modi is alive."), which is built to contradict
+a death claim without sharing its words.
 """
 
 import re
@@ -148,7 +154,8 @@ def wikipedia_candidates(claim: str) -> tuple[list[dict], dict]:
     status = {"name": WIKIPEDIA, "ok": error is None, "skipped": False,
               "found": len({s["title"] for s in sentences}), "message": error or ""}
     candidates = [{"sentence": s["sentence"], "source": WIKIPEDIA, "publisher": "wikipedia.org",
-                   "title": s["title"], "url": s["url"], "date": None} for s in sentences]
+                   "title": s["title"], "url": s["url"], "date": None,
+                   "life_fact": s.get("life_fact", False)} for s in sentences]
     return candidates, status
 
 
@@ -173,11 +180,24 @@ def sentence_evidence(claim: str, candidates: list[dict]) -> list[dict]:
             stance, score = REFUTES, p["contradiction"]
         else:
             stance, score = NEUTRAL, p["neutral"]
-        m = match(key_terms, candidates[i]["sentence"])
-        items.append({**candidates[i], "rating": None, "stance": stance,
-                      "score": round(score, 3), "similarity": round(sim, 3),
-                      "on_topic": m["score"] >= KEY_TERMS and m["entity_coverage"] >= KEY_NAMES})
+        c = candidates[i]
+        m = match(key_terms, c["sentence"])
+        # Contradiction is the NLI model's weak spot, so a refuting sentence must
+        # say something about what the claim says, not just name the same person.
+        on_topic = (m["score"] >= KEY_TERMS and m["entity_coverage"] >= KEY_NAMES
+                    and (stance != REFUTES or c.get("life_fact")
+                         or _shares_more_than_names(m["matched_words"], c["sentence"])))
+        items.append({**c, "rating": None, "stance": stance,
+                      "score": round(score, 3), "similarity": round(sim, 3), "on_topic": on_topic})
     return items
+
+
+def _shares_more_than_names(matched: list[str], sentence: str) -> bool:
+    """True if a matched word is not capitalised in the sentence, i.e. not part of a name."""
+    words = sentence.split()
+    if sum(w[:1].isupper() for w in words) > 0.6 * len(words):
+        return True  # Title Case headline: capitals say nothing about names
+    return any(not w[:1].isupper() for w in matched)
 
 
 def decide(fc_items: list[dict], wiki_items: list[dict]) -> tuple[str, float, str | None]:

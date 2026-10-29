@@ -119,6 +119,11 @@ def known_word_ratio(pipeline, cleaned: str) -> float:
     return sum(w in tfidf.vocabulary_ for w in words) / len(words)
 
 
+def word_count(cleaned: str) -> int:
+    """Words as TF-IDF sees them: two or more letters or digits."""
+    return len(re.findall(r"\w\w+", cleaned))
+
+
 def predict_style(pipeline, text: str, result: dict) -> dict:
     """Fill a schema result dict (see core/schema.py) with the V1 prediction."""
     cleaned = clean_title(text)
@@ -140,10 +145,11 @@ def predict_style(pipeline, text: str, result: dict) -> dict:
         result["warnings"].append(
             "None of these words appear in the training data, so the model has nothing to go on."
         )
-    elif len(re.findall(r"\w\w+", cleaned)) < MIN_WORDS:  # same words TF-IDF counts
+    elif word_count(cleaned) < MIN_WORDS:
         result["verdict"] = UNCERTAIN
         result["warnings"].append(
-            f"Too short to judge the writing style (fewer than {MIN_WORDS} words). "
+            f"Too short to judge the writing style: the model counts {word_count(cleaned)} words here "
+            f"(it skips one-letter words such as “a”) and is unreliable below {MIN_WORDS}. "
             "Use the evidence check for short claims."
         )
     elif UNCERTAIN_BAND[0] <= fake_p <= UNCERTAIN_BAND[1]:

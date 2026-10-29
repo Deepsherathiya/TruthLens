@@ -154,3 +154,24 @@ def test_death_claim_about_a_surname_uses_the_full_name(monkeypatch):
     assert evidence.name_in_full("modi died") == ("Narendra Modi died", "Narendra Modi")
     assert evidence.name_in_full("Narendra Modi died") == ("Narendra Modi died", None)
     assert evidence.name_in_full("Modi visits Japan") == ("Modi visits Japan", None)  # not a death claim
+
+
+def test_refuting_sentence_must_say_more_than_the_name(monkeypatch):
+    # Regression: "Modi is often accused of having narcissistic traits" (97% contradiction)
+    # decided "modi is a dictator", though it shares only the name.
+    monkeypatch.setattr(nli_evidence, "rank_by_similarity", lambda claim, texts, k: [(0, 0.60)])
+    monkeypatch.setattr(nli_evidence, "nli", lambda premises, hypothesis: [
+        {"entailment": 0.01, "contradiction": 0.97, "neutral": 0.02}])
+    items = nli_evidence.sentence_evidence(
+        "modi is a dictator", [{"sentence": "Modi is often accused of having narcissistic traits."}])
+    assert items[0]["stance"] == "refutes" and not items[0]["on_topic"]
+
+
+def test_supporting_paraphrase_can_still_decide(monkeypatch):
+    sentence = ("Storm Boelo brought peak gusts to Scotland, resulting in two wind-related "
+                "fatalities in the UK from falling trees.")
+    monkeypatch.setattr(nli_evidence, "rank_by_similarity", lambda claim, texts, k: [(0, 0.62)])
+    monkeypatch.setattr(nli_evidence, "nli", lambda premises, hypothesis: [
+        {"entailment": 0.99, "contradiction": 0.0, "neutral": 0.01}])
+    items = nli_evidence.sentence_evidence("Storm Boelo killed two people in the UK", [{"sentence": sentence}])
+    assert items[0]["on_topic"] and decide([], items)[0] == SUPPORTED
